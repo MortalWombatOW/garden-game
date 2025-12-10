@@ -1,15 +1,22 @@
 
 export type EntityID = number;
 
+export enum SystemType {
+    FIXED = "fixed",
+    RENDER = "render",
+}
+
 export abstract class Component {
     public entityID: EntityID = -1;
 }
 
 export abstract class System {
     protected world: World;
+    public readonly systemType: SystemType;
 
-    constructor(world: World) {
+    constructor(world: World, systemType: SystemType = SystemType.FIXED) {
         this.world = world;
+        this.systemType = systemType;
     }
 
     public abstract update(deltaTime: number): void;
@@ -35,11 +42,16 @@ export class Entity {
     public hasComponent(componentClass: { new(...args: any[]): Component }): boolean {
         return this.components.has(componentClass.name);
     }
+
+    public removeComponent(componentClass: { new(...args: any[]): Component }): void {
+        this.components.delete(componentClass.name);
+    }
 }
 
 export class World {
     private entities: Map<EntityID, Entity> = new Map();
-    private systems: System[] = [];
+    private fixedSystems: System[] = [];
+    private renderSystems: System[] = [];
     private nextEntityID: EntityID = 0;
 
     public createEntity(): Entity {
@@ -48,16 +60,30 @@ export class World {
         return entity;
     }
 
+    public removeEntity(id: EntityID): void {
+        this.entities.delete(id);
+    }
+
     public getEntity(id: EntityID): Entity | undefined {
         return this.entities.get(id);
     }
 
     public addSystem(system: System): void {
-        this.systems.push(system);
+        if (system.systemType === SystemType.FIXED) {
+            this.fixedSystems.push(system);
+        } else {
+            this.renderSystems.push(system);
+        }
     }
 
-    public update(deltaTime: number): void {
-        for (const system of this.systems) {
+    public updateFixed(deltaTime: number): void {
+        for (const system of this.fixedSystems) {
+            system.update(deltaTime);
+        }
+    }
+
+    public updateRender(deltaTime: number): void {
+        for (const system of this.renderSystems) {
             system.update(deltaTime);
         }
     }
@@ -70,5 +96,9 @@ export class World {
             }
         }
         return result;
+    }
+
+    public getAllEntities(): Entity[] {
+        return Array.from(this.entities.values());
     }
 }

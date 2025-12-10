@@ -7,6 +7,9 @@ export class GameLoop {
     private world: World;
     private running: boolean = false;
 
+    // Time control
+    public timeScale: number = 1.0;
+
     // Simulation settings
     private readonly TICK_RATE = 10; // Ticks per second
     private readonly TICK_DT = 1000 / this.TICK_RATE;
@@ -22,17 +25,20 @@ export class GameLoop {
         this.running = true;
 
         this.engine.getEngine().runRenderLoop(() => {
-            const deltaTime = this.engine.getEngine().getDeltaTime();
+            const deltaTime = this.engine.getEngine().getDeltaTime() * this.timeScale;
 
             this.accumulator += deltaTime;
 
-            // Fixed time step for simulation
+            // Fixed time step for simulation systems
             while (this.accumulator >= this.TICK_DT) {
-                this.world.update(this.TICK_DT / 1000); // Pass DT in seconds
+                this.world.updateFixed(this.TICK_DT / 1000); // Pass DT in seconds
                 this.accumulator -= this.TICK_DT;
             }
 
-            // Render every frame
+            // Render systems run every frame
+            this.world.updateRender(deltaTime / 1000);
+
+            // Render the scene
             this.engine.getScene().render();
         });
 

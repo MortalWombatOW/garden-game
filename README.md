@@ -79,21 +79,22 @@ src/
 ├── core/
 │   ├── Engine.ts          # Babylon engine initialization
 │   ├── GameLoop.ts        # Managing the Tick (Sim) vs Frame (Render)
-│   └── ECS.ts             # Base Entity, Component, System classes
+│   ├── ECS.ts             # Base Entity, Component, System classes
+│   └── SpatialHashGrid.ts # Spatial partitioning for placement queries
 ├── systems/
 │   ├── GrowthSystem.ts    # Handles biological aging and death
-│   ├── InputSystem.ts     # Raycasting and Mouse-to-World mapping
-│   ├── RenderSystem.ts    # Syncs ECS data to Babylon ThinInstances
-│   └── TimeSystem.ts      # Day/Night cycle logic
+│   ├── InputSystem.ts     # Raycasting, Tooltip, and Plant placement
+│   ├── RenderSystem.ts    # Syncs ECS data to Babylon meshes
+│   └── TimeSystem.ts      # Day/Night cycle and game-time logic
 ├── components/
 │   ├── PlantState.ts      # Data: Age, Health, SpeciesID
-│   └── Needs.ts           # Data: Water, Sun, NPK buffers
+│   ├── Needs.ts           # Data: Water, Sun, NPK buffers
+│   └── TransformComponent.ts # Data: Position (x, y, z)
 ├── assets/
 │   ├── meshes/            # glTF/GLB models (Seed, Sprout, Flower)
 │   └── textures/          # Soil maps, UI icons
 └── ui/
-    ├── HUD.ts             # HTML/CSS overlay
-    └── Tooltips.ts        # 3D projected UI for plant inspection
+    └── ToolManager.ts     # Manages toolbar state and input modes
 ```
 
 -----
@@ -119,28 +120,32 @@ npm run dev
 
 ### Controls (Debug)
 
-  * **WASD / Arrow Keys**: Pan Camera
+  * **1**: Select Plant Tool (🌱)
+  * **2**: Select Inspect Tool (🔍)
+  * **O**: Toggle Plant Satisfaction Overlay (🌿)
+  * **Escape**: Deselect Tool
+  * **Left Click**: Use Tool (Plant seed or Inspection placeholder)
+  * **Hover**: Inspect plants/soil (in Inspect mode)
+  * **Mouse Drag**: Pan Camera (Default FreeCamera)
   * **Scroll Wheel**: Zoom
-  * **Left Click**: Place Seed (Current Selected Species)
-  * **Right Click**: Inspect Tile (Debug Log)
-  * **Spacebar**: Pause/Resume Simulation
 
 -----
 
 ## 📅 MVP Roadmap
 
-### Phase 1: The Potting Bench (Current)
+### Phase 1: The Potting Bench (Completed ✅)
 
-  - [ ] **Spatial Hash Grid**: Implement efficient querying for "free placement" to prevent overlapping plants.
-  - [ ] **The "Tick"**: Separate Render Loop (60fps) from Simulation Loop (10 ticks/sec).
-  - [ ] **Basic Death**: Implement logic where `Moisture < 0.1` results in the mesh changing color to brown.
-  - [ ] **Visual Feedback**: Implement a "Cursor Tool" that changes color based on valid/invalid planting spots.
+  - [x] **Spatial Hash Grid**: Implement efficient querying for "free placement" to prevent overlapping plants.
+  - [x] **The "Tick"**: Separate Render Loop (60fps) from Simulation Loop (10 ticks/sec).
+  - [x] **Basic Death**: Implement logic where `Moisture < 0.1` results in the mesh changing color to brown.
+  - [x] **Visual Feedback**: Implement a "Cursor Tool" that changes color based on valid/invalid planting spots.
+  - [x] **UI & Tools**: Toolbar for planting/inspecting with tooltip feedback.
 
-### Phase 2: Simulation Depth
+### Phase 2: Simulation Depth (Completed ✅)
 
-  - [ ] **Soil Texture Mapping**: Visual representation of wet vs. dry soil.
-  - [ ] **Growth Stages**: Swapping meshes from Sprout $\rightarrow$ Vegetative $\rightarrow$ Flowering.
-  - [ ] **UI Overlay**: "Qualitative" status bars (e.g., "Thirsty", "Happy", "Drowning").
+  - [x] **Soil Texture Mapping**: Visual representation of wet vs. dry soil.
+  - [x] **Growth Stages**: Swapping meshes from Sprout → Vegetative → Flowering.
+  - [x] **UI Overlay**: "Qualitative" status labels (e.g., "Thirsty", "Happy", "Wilting") with toggle control.
 
 -----
 
@@ -149,3 +154,8 @@ npm run dev
   * **Style:** Low-poly but high-fidelity lighting (PBR).
   * **Palette:** Natural, earthy tones. High contrast for critical gameplay elements (e.g., Wilted plants should look distinctly different from healthy ones).
   * **Optimization:** All plant stages must share materials where possible to allow for `ThinInstance` batching.
+
+
+  ## TODOs:
+  - [x] time controls in top-center UI (pause, 1x, 2x, 4x)
+  - [] sun goes 360 degrees per day, casts shadows
