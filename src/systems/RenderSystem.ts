@@ -5,6 +5,7 @@ import { Needs } from "../components/Needs";
 import { TransformComponent } from "../components/TransformComponent";
 import { Engine } from "../core/Engine";
 import * as BABYLON from "@babylonjs/core";
+import { LightingSystem } from "./LightingSystem";
 
 // Mesh configurations per stage
 const STAGE_MESHES: Record<PlantStage, { height: number; diameter: number }> = {
@@ -22,6 +23,7 @@ export class RenderSystem extends System {
     private entityMeshes: Map<EntityID, BABYLON.Mesh> = new Map();
     private statusLabelsContainer: HTMLElement | null;
     private statusLabels: Map<EntityID, HTMLElement> = new Map();
+    private lightingSystem: LightingSystem | null = null;
 
     constructor(world: World) {
         super(world, SystemType.RENDER);
@@ -29,6 +31,11 @@ export class RenderSystem extends System {
         this.scene = engineInstance.getScene();
         this.engine = engineInstance.getEngine();
         this.statusLabelsContainer = document.getElementById("status-labels");
+    }
+
+
+    public setLightingSystem(lightingSystem: LightingSystem): void {
+        this.lightingSystem = lightingSystem;
     }
 
     public update(_deltaTime: number): void {
@@ -74,6 +81,11 @@ export class RenderSystem extends System {
         }, this.scene);
 
         mesh.position = new BABYLON.Vector3(transform.x, config.height / 2, transform.z);
+        mesh.receiveShadows = true;
+
+        if (this.lightingSystem) {
+            this.lightingSystem.addShadowCaster(mesh);
+        }
 
         const mat = new BABYLON.StandardMaterial(`plantMat_${entityId}`, this.scene);
         mat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2);

@@ -157,5 +157,14 @@ npm run dev
 
 
   ## TODOs:
-  - [x] time controls in top-center UI (pause, 1x, 2x, 4x)
   - [] sun goes 360 degrees per day, casts shadows
+  - [] separate plant age into 2 parts: age and sunlit age
+  - [] water view showing flow of water from soil to plants/evaporation
+  - [] procedural generation of plants using L-systems and simplified genetics
+  - [] streams + ponds (always 100% moisture), stone paths (always 0% moisture)
+  - [] rain events
+  - [] weather events (wind, snow, hail, etc.)
+  - [] 3d terrain generation
+  - [] procedural generation of soil
+  - [] procedural generation of wildlife
+  

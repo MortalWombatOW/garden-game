@@ -5,6 +5,7 @@ import { Needs } from "../components/Needs";
 import { TransformComponent } from "../components/TransformComponent";
 import { TimeSystem } from "./TimeSystem";
 import { SoilSystem } from "./SoilSystem";
+import type { LightingSystem } from "./LightingSystem";
 
 // Root radius (in world units) by growth stage
 const ROOT_RADIUS: Record<string, number> = {
@@ -16,11 +17,20 @@ const ROOT_RADIUS: Record<string, number> = {
 export class GrowthSystem extends System {
     private timeSystem: TimeSystem;
     private soilSystem: SoilSystem;
+    private lightingSystem: LightingSystem | null = null;
+
+    // Growth modifiers
+    private readonly SHADE_GROWTH_MULTIPLIER = 0.3; // Growth rate in shade (30% of full sun)
+    private readonly MIN_LIGHT_FOR_GROWTH = 0.1; // Minimum sunlight to grow at all
 
     constructor(world: World, timeSystem: TimeSystem, soilSystem: SoilSystem) {
         super(world, SystemType.FIXED);
         this.timeSystem = timeSystem;
         this.soilSystem = soilSystem;
+    }
+
+    public setLightingSystem(lightingSystem: LightingSystem): void {
+        this.lightingSystem = lightingSystem;
     }
 
     public update(deltaTime: number): void {
@@ -39,8 +49,20 @@ export class GrowthSystem extends System {
             // Skip dead plants
             if (state.health <= 0) continue;
 
-            // Age the plant in game-hours
-            state.age += gameHoursDelta;
+            // Check sunlight intensity for this plant
+            let sunIntensity = 1.0;
+            if (this.lightingSystem) {
+                sunIntensity = this.lightingSystem.getSunlightIntensity(transform.x, transform.z);
+            }
+
+            // Calculate effective growth rate based on sunlight
+            // Plants need minimum light to grow, otherwise they just survive
+            const growthMultiplier = sunIntensity >= this.MIN_LIGHT_FOR_GROWTH
+                ? this.SHADE_GROWTH_MULTIPLIER + (1 - this.SHADE_GROWTH_MULTIPLIER) * sunIntensity
+                : 0;
+
+            // Age the plant in game-hours (modified by sunlight)
+            state.age += gameHoursDelta * growthMultiplier;
 
             // Update growth stage
             state.updateStage();
@@ -65,8 +87,9 @@ export class GrowthSystem extends System {
             // Refill internal water buffer
             needs.water = Math.min(100, needs.water + absorbed);
 
-            // Natural water usage/transpiration (lose some each tick)
-            const transpiration = gameHoursDelta * 1.5; // Lose 1.5% per game-hour
+            // Natural water usage/transpiration (modified by sunlight - less transpiration in shade)
+            const transpirationMultiplier = this.SHADE_GROWTH_MULTIPLIER + (1 - this.SHADE_GROWTH_MULTIPLIER) * sunIntensity;
+            const transpiration = gameHoursDelta * 1.5 * transpirationMultiplier; // Lose 1.5% per game-hour at full sun
             needs.water = Math.max(0, needs.water - transpiration);
 
             // Death logic - only kill if not in sprout stage and critically dehydrated

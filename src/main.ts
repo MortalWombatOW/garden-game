@@ -8,6 +8,7 @@ import { InputSystem } from "./systems/InputSystem";
 import { RenderSystem } from "./systems/RenderSystem";
 import { TimeSystem } from "./systems/TimeSystem";
 import { SoilSystem } from "./systems/SoilSystem";
+import { LightingSystem } from "./systems/LightingSystem";
 import { ToolManager } from "./ui/ToolManager";
 import "./style.css";
 
@@ -34,9 +35,21 @@ inputSystem.setSoilSystem(soilSystem);
 
 world.addSystem(timeSystem);
 world.addSystem(soilSystem);
-world.addSystem(new GrowthSystem(world, timeSystem, soilSystem));
+const lightingSystem = new LightingSystem(world, timeSystem);
+world.addSystem(lightingSystem);
+
+// Wire lighting dependencies after lightingSystem is created
+soilSystem.setLightingSystem(lightingSystem);
+const growthSystem = new GrowthSystem(world, timeSystem, soilSystem);
+growthSystem.setLightingSystem(lightingSystem);
+world.addSystem(growthSystem);
+
+
 world.addSystem(inputSystem);
-world.addSystem(new RenderSystem(world));
+
+const renderSystem = new RenderSystem(world);
+renderSystem.setLightingSystem(lightingSystem);
+world.addSystem(renderSystem);
 
 // HUD Update
 const timeDisplay = document.getElementById("time-display");

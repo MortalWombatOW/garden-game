@@ -2,6 +2,7 @@
 import { System, SystemType, World } from "../core/ECS";
 import { Engine } from "../core/Engine";
 import * as BABYLON from "@babylonjs/core";
+import type { LightingSystem } from "./LightingSystem";
 
 /**
  * SoilSystem manages per-tile soil data with diffusion and absorption.
@@ -21,7 +22,11 @@ export class SoilSystem extends System {
     // Diffusion parameters
     private readonly DIFFUSION_RATE = 0.01; // % of excess moisture to share per tick (reduced 80%)
     private readonly EVAPORATION_RATE = 0.001; // % moisture lost per tick globally
+    private readonly SHADOW_EVAP_MULTIPLIER = 0.2; // Evaporation rate multiplier in shadow
     private textureDirty = true;
+
+    // Lighting reference for sun-aware evaporation
+    private lightingSystem: LightingSystem | null = null;
 
     // Highlighting
     private highlightMesh: BABYLON.Mesh;
@@ -259,9 +264,30 @@ export class SoilSystem extends System {
         this.textureDirty = true;
     }
 
+    public setLightingSystem(lightingSystem: LightingSystem): void {
+        this.lightingSystem = lightingSystem;
+    }
+
     private evaporate(): void {
         this.soilMoisture.forEach((moisture, key) => {
-            const newVal = Math.max(0, moisture - this.EVAPORATION_RATE);
+            // Parse cell coordinates from key
+            const [xStr, zStr] = key.split(',');
+            const cellX = parseInt(xStr);
+            const cellZ = parseInt(zStr);
+
+            // Convert cell to world position (center of cell)
+            const worldX = cellX * this.CELL_SIZE;
+            const worldZ = cellZ * this.CELL_SIZE;
+
+            // Determine evaporation rate based on sunlight
+            let evapRate = this.EVAPORATION_RATE;
+            if (this.lightingSystem) {
+                const sunIntensity = this.lightingSystem.getSunlightIntensity(worldX, worldZ);
+                // Full sun = normal evap, shadow = reduced evap, night = minimal evap
+                evapRate *= this.SHADOW_EVAP_MULTIPLIER + (1 - this.SHADOW_EVAP_MULTIPLIER) * sunIntensity;
+            }
+
+            const newVal = Math.max(0, moisture - evapRate);
             this.soilMoisture.set(key, newVal);
         });
     }
