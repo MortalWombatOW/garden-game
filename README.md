@@ -162,4 +162,4 @@ npm run dev
   - [] 3d terrain generation
   - [] procedural generation of soil
   - [] procedural generation of wildlife
-  
+  - [] peer to peer persistent multiplayer
