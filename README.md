@@ -158,6 +158,7 @@ npm run dev
 
   ## TODOs:
   - [] sun goes 360 degrees per day, casts shadows
+  - [] add debug tooling with the babylon inspector
   - [] separate plant age into 2 parts: age and sunlit age
   - [] water view showing flow of water from soil to plants/evaporation
   - [] procedural generation of plants using L-systems and simplified genetics
