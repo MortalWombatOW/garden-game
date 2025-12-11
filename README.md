@@ -1,9 +1,3 @@
-Here is a comprehensive `README.md` for the root of your project. It serves as both a design document and a technical onboarding guide for engineering.
-
-I have structured this to reflect the **Hybrid Loop (Discovery + Ecosystem)** and the **Qualitative/Hardcore balance** we discussed.
-
------
-
 # 🌿 Verdant: A Cozy Garden Simulator
 
 > **A scientifically-grounded gardening sandbox built with Babylon.js.**
