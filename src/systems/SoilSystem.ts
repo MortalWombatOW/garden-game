@@ -1,127 +1,122 @@
-
 import { System, SystemType, World } from "../core/ECS";
 import { Engine } from "../core/Engine";
 import * as BABYLON from "@babylonjs/core";
 import { TimeSystem } from "./TimeSystem";
 import type { LightingSystem } from "./LightingSystem";
+import { visualizationFragmentShader } from "../shaders/visualizationFragment";
+
+// Register visualization shader
+BABYLON.Effect.ShadersStore["soilVisualizationPixelShader"] = visualizationFragmentShader;
 
 /**
  * SoilSystem manages per-tile soil data with diffusion and absorption.
- * The world is divided into a grid of cells.
+ * Uses CPU for simulation, GPU (CustomProceduralTexture) for visualization only.
  */
 export class SoilSystem extends System {
     private groundMaterial: BABYLON.StandardMaterial | null;
     private scene: BABYLON.Scene;
 
-    // Per-tile moisture data (0-100)
-    // Double buffer approach: current and next state
+    // Grid Constants
+    public readonly CELL_SIZE = 1.0;
+    public readonly GRID_SIZE = 50;
+    private readonly HALF_SIZE = 25;
+
+    // Simulation Parameters
+    private readonly SATURATION_THRESHOLD = 100;
+    private readonly DIFFUSION_RATE = 0.1;
+    private readonly SOIL_EVAPORATION_RATE = 0.002;
+    private readonly SHADOW_EVAP_MULTIPLIER = 0.2;
+
+    // --- CPU Simulation State ---
     private moistureData: Float32Array;
     private nextMoistureData: Float32Array;
-
-
-
-    // Per-tile nitrogen data (0-100)
     private nitrogenData: Float32Array;
     private nextNitrogenData: Float32Array;
 
-    public readonly CELL_SIZE = 1.0; // 1 unit per cell
-    public readonly GRID_SIZE = 50;  // 50x50 grid
-    private readonly HALF_SIZE = 25;
+    // --- GPU Visualization ---
+    // RawTexture holds simulation state (uploaded from CPU)
+    private stateTexture!: BABYLON.RawTexture;
+    private stateTextureData: Float32Array;
 
-    // Diffusion parameters
-    private readonly DIFFUSION_RATE = 0.1; // % of excess moisture to share per tick 
-    private readonly SOIL_EVAPORATION_RATE = 0.002; // Slow drying of soil (~0.1/sec)
+    // CustomProceduralTexture for visualization (converts state to colors)
+    private visTexture!: BABYLON.CustomProceduralTexture;
 
-    private readonly SATURATION_THRESHOLD = 100; // Moisture level where soil can't hold more
-    private readonly SHADOW_EVAP_MULTIPLIER = 0.2; // Evaporation rate multiplier in shadow
-    private textureDirty = true;
-
-    // Lighting reference for sun-aware evaporation
-    private lightingSystem: LightingSystem | null = null;
+    // Time references
     private timeSystem: TimeSystem | null = null;
 
     // Highlighting
-    private highlightMesh: BABYLON.Mesh;
+    private highlightMesh!: BABYLON.Mesh;
+    private textureDirty: boolean = true;
 
-    // Texture for visualization
-    private moistureTexture: BABYLON.DynamicTexture;
-    private ctx: CanvasRenderingContext2D;
+    private debugTimer: number = 0;
 
     constructor(world: World) {
-        // Use FIXED for tick-based simulation
         super(world, SystemType.FIXED);
-        const engine = Engine.getInstance();
-        this.scene = engine.getScene();
-        this.groundMaterial = engine.getGroundMaterial();
+        const gameEngine = Engine.getInstance();
+        this.scene = gameEngine.getScene();
+        this.groundMaterial = gameEngine.getGroundMaterial();
 
-        // Initialize buffers
-        const size = this.GRID_SIZE * this.GRID_SIZE;
-        this.moistureData = new Float32Array(size);
-        this.nextMoistureData = new Float32Array(size);
+        const size = this.GRID_SIZE;
+        const totalPixels = size * size;
 
-        this.nitrogenData = new Float32Array(size);
-        this.nextNitrogenData = new Float32Array(size);
+        // Initialize CPU Buffers
+        this.moistureData = new Float32Array(totalPixels);
+        this.nextMoistureData = new Float32Array(totalPixels);
+        this.nitrogenData = new Float32Array(totalPixels);
+        this.nextNitrogenData = new Float32Array(totalPixels);
+        this.stateTextureData = new Float32Array(totalPixels * 4); // RGBA
 
-        // Create dynamic texture for soil visualization
-        // Match texture size to grid size for 1:1 pixel mapping
-        this.moistureTexture = new BABYLON.DynamicTexture("soilMoisture", { width: this.GRID_SIZE, height: this.GRID_SIZE }, this.scene, false);
-        this.moistureTexture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
-        this.ctx = this.moistureTexture.getContext() as unknown as CanvasRenderingContext2D;
-
-        if (this.groundMaterial) {
-            this.groundMaterial.diffuseTexture = this.moistureTexture;
-            this.moistureTexture.vScale = 1;
-            this.moistureTexture.uScale = 1;
-        }
-
-        // Initialize grid with baseline moisture
+        // Initialize soil
         this.initializeSoil();
 
-        // Create highlight mesh
-        this.highlightMesh = BABYLON.MeshBuilder.CreatePlane("soilHighlight", { size: this.CELL_SIZE }, this.scene);
-        this.highlightMesh.rotation.x = Math.PI / 2;
-        this.highlightMesh.position.y = 0.01;
+        // Initialize GPU resources
+        this.initializeTextures();
+        this.initializeHighlight();
 
-        const hlMat = new BABYLON.StandardMaterial("soilHighlightMat", this.scene);
-        hlMat.diffuseColor = new BABYLON.Color3(0, 0, 1);
-        hlMat.alpha = 0.3;
-        hlMat.zOffset = -1;
-        this.highlightMesh.material = hlMat;
-        this.highlightMesh.isVisible = false;
-        this.highlightMesh.isPickable = false;
+        // Setup ground material
+        if (this.groundMaterial) {
+            this.groundMaterial.diffuseTexture = this.visTexture;
+        }
 
         // Initial render
-        this.updateTexture();
+        this.updateStateTexture();
     }
 
-    private getIndex(x: number, z: number): number {
-        const gridX = x + this.HALF_SIZE;
-        const gridZ = z + this.HALF_SIZE;
-        if (gridX < 0 || gridX >= this.GRID_SIZE || gridZ < 0 || gridZ >= this.GRID_SIZE) {
-            return -1;
-        }
-        return gridZ * this.GRID_SIZE + gridX;
-    }
+    private initializeTextures(): void {
+        const size = this.GRID_SIZE;
 
-    /**
-     * Get the total amount of moisture in the soil (sum of all cells)
-     */
-    public getTotalMoisture(): number {
-        let total = 0;
-        for (let i = 0; i < this.moistureData.length; i++) {
-            total += this.moistureData[i];
-        }
-        return total;
+        // State texture (CPU -> GPU, holds moisture/nitrogen as RGBA floats)
+        this.stateTexture = new BABYLON.RawTexture(
+            this.stateTextureData,
+            size,
+            size,
+            BABYLON.Engine.TEXTUREFORMAT_RGBA,
+            this.scene,
+            false,
+            false,
+            BABYLON.Texture.NEAREST_SAMPLINGMODE,
+            BABYLON.Constants.TEXTURETYPE_FLOAT
+        );
+        this.stateTexture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        this.stateTexture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+
+        // Visualization texture (GPU shader converts state to colors)
+        this.visTexture = new BABYLON.CustomProceduralTexture(
+            "soilVis",
+            "soilVisualization",
+            size,
+            this.scene
+        );
+        this.visTexture.refreshRate = 1; // Render every frame
+        this.visTexture.setTexture("uSimulation", this.stateTexture);
+        this.visTexture.setFloat("uOverlayEnabled", 0.0);
     }
 
     private initializeSoil(): void {
         for (let x = -this.HALF_SIZE; x < this.HALF_SIZE; x++) {
             for (let z = -this.HALF_SIZE; z < this.HALF_SIZE; z++) {
-                // Natural noise pattern (10-30% base moisture)
                 const moistureNoise = Math.sin(x * 0.2) * Math.cos(z * 0.2) * 10;
                 const baseMoisture = 20 + moistureNoise;
-
-                // Nitrogen noise (10-25% base)
                 const nitrogenNoise = Math.cos(x * 0.15) * Math.sin(z * 0.15) * 7;
                 const baseNitrogen = 15 + nitrogenNoise;
 
@@ -134,6 +129,32 @@ export class SoilSystem extends System {
         }
     }
 
+    private initializeHighlight(): void {
+        this.highlightMesh = BABYLON.MeshBuilder.CreatePlane(
+            "soilHighlight",
+            { size: this.CELL_SIZE },
+            this.scene
+        );
+        this.highlightMesh.rotation.x = Math.PI / 2;
+        this.highlightMesh.position.y = 0.01;
+        const hlMat = new BABYLON.StandardMaterial("soilHighlightMat", this.scene);
+        hlMat.diffuseColor = new BABYLON.Color3(0, 0, 1);
+        hlMat.alpha = 0.3;
+        hlMat.zOffset = -1;
+        this.highlightMesh.material = hlMat;
+        this.highlightMesh.isVisible = false;
+        this.highlightMesh.isPickable = false;
+    }
+
+    private getIndex(x: number, z: number): number {
+        const gridX = x + this.HALF_SIZE;
+        const gridZ = z + this.HALF_SIZE;
+        if (gridX < 0 || gridX >= this.GRID_SIZE || gridZ < 0 || gridZ >= this.GRID_SIZE) {
+            return -1;
+        }
+        return gridZ * this.GRID_SIZE + gridX;
+    }
+
     public getKey(x: number, z: number): string {
         const cellX = Math.floor(x / this.CELL_SIZE);
         const cellZ = Math.floor(z / this.CELL_SIZE);
@@ -143,9 +164,19 @@ export class SoilSystem extends System {
     public getCellCoords(x: number, z: number): { cellX: number; cellZ: number } {
         return {
             cellX: Math.floor(x / this.CELL_SIZE),
-            cellZ: Math.floor(z / this.CELL_SIZE)
+            cellZ: Math.floor(z / this.CELL_SIZE),
         };
     }
+
+    public getTotalMoisture(): number {
+        let total = 0;
+        for (let i = 0; i < this.moistureData.length; i++) {
+            total += this.moistureData[i];
+        }
+        return total;
+    }
+
+    // --- Public API (Reading) ---
 
     public getMoistureAt(x: number, z: number): number {
         const { cellX, cellZ } = this.getCellCoords(x, z);
@@ -158,25 +189,6 @@ export class SoilSystem extends System {
         const index = this.getIndex(cellX, cellZ);
         if (index === -1) return 0;
         return this.moistureData[index];
-    }
-
-
-
-    public modifyMoistureAt(x: number, z: number, amount: number): void {
-        const { cellX, cellZ } = this.getCellCoords(x, z);
-        const index = this.getIndex(cellX, cellZ);
-
-        if (index !== -1) {
-            const currentSoil = this.moistureData[index];
-            if (amount > 0) {
-                // Add water, but clamp to saturation (no pooling)
-                this.moistureData[index] = Math.min(this.SATURATION_THRESHOLD, currentSoil + amount);
-            } else {
-                // Taking water - prevent going below 0
-                this.moistureData[index] = Math.max(0, currentSoil + amount);
-            }
-            this.textureDirty = true;
-        }
     }
 
     public getNitrogenAt(x: number, z: number): number {
@@ -192,6 +204,23 @@ export class SoilSystem extends System {
         return this.nitrogenData[index];
     }
 
+    // --- Public API (Writing) ---
+
+    public modifyMoistureAt(x: number, z: number, amount: number): void {
+        const { cellX, cellZ } = this.getCellCoords(x, z);
+        const index = this.getIndex(cellX, cellZ);
+
+        if (index !== -1) {
+            const currentSoil = this.moistureData[index];
+            if (amount > 0) {
+                this.moistureData[index] = Math.min(this.SATURATION_THRESHOLD, currentSoil + amount);
+            } else {
+                this.moistureData[index] = Math.max(0, currentSoil + amount);
+            }
+            this.textureDirty = true;
+        }
+    }
+
     public modifyNitrogenAt(x: number, z: number, amount: number): void {
         const { cellX, cellZ } = this.getCellCoords(x, z);
         const index = this.getIndex(cellX, cellZ);
@@ -204,10 +233,6 @@ export class SoilSystem extends System {
         }
     }
 
-    /**
-     * Absorb water from soil within a given radius of a world position.
-     * Returns the total amount actually absorbed.
-     */
     public absorbWater(worldX: number, worldZ: number, radius: number, maxAmount: number): number {
         const { cellX: centerX, cellZ: centerZ } = this.getCellCoords(worldX, worldZ);
         const cellRadius = Math.ceil(radius / this.CELL_SIZE);
@@ -215,13 +240,10 @@ export class SoilSystem extends System {
         let totalAvailable = 0;
         const cellsInRange: { index: number; moisture: number }[] = [];
 
-        // Scan cells in radius
         for (let dx = -cellRadius; dx <= cellRadius; dx++) {
             for (let dz = -cellRadius; dz <= cellRadius; dz++) {
                 const cx = centerX + dx;
                 const cz = centerZ + dz;
-
-                // Check distance (circle, not square)
                 const dist = Math.sqrt(dx * dx + dz * dz);
                 if (dist > cellRadius) continue;
 
@@ -238,15 +260,11 @@ export class SoilSystem extends System {
 
         if (totalAvailable === 0 || cellsInRange.length === 0) return 0;
 
-        // Take proportionally from each cell, up to maxAmount
-        const toAbsorb = Math.min(maxAmount, totalAvailable * 0.5); // Take at most 50% of available
+        const toAbsorb = Math.min(maxAmount, totalAvailable * 0.5);
         let absorbed = 0;
 
         for (const cell of cellsInRange) {
             const share = (cell.moisture / totalAvailable) * toAbsorb;
-            // First try to take from surface water (free water) if it exists at this cell
-            // But cellsInRange currently only looks at moistureData. 
-            // For now, keep as is affecting moistureData, but ideally plants could drink surface water too.
             const newMoisture = Math.max(0, cell.moisture - share);
             this.moistureData[cell.index] = newMoisture;
             absorbed += share;
@@ -272,105 +290,58 @@ export class SoilSystem extends System {
         this.highlightMesh.isVisible = true;
     }
 
-    // Water Overlay
-    private waterOverlayEnabled = false;
-
     public setWaterOverlay(enabled: boolean): void {
-        this.waterOverlayEnabled = enabled;
-        // When overlay is enabled, switch to Emissive for "unaffected by sunlight"
+        this.visTexture.setFloat("uOverlayEnabled", enabled ? 1.0 : 0.0);
+
         if (this.groundMaterial) {
             if (enabled) {
                 this.groundMaterial.diffuseTexture = null;
-                this.groundMaterial.emissiveTexture = this.moistureTexture;
-                // DON'T set emissiveColor to white - it overrides everything!
-                // Keep it at default (black) so texture colors show through
+                this.groundMaterial.emissiveTexture = this.visTexture;
                 this.groundMaterial.emissiveColor = new BABYLON.Color3(0, 0, 0);
                 this.groundMaterial.disableLighting = true;
             } else {
                 this.groundMaterial.emissiveTexture = null;
-                this.groundMaterial.diffuseTexture = this.moistureTexture;
+                this.groundMaterial.diffuseTexture = this.visTexture;
                 this.groundMaterial.emissiveColor = new BABYLON.Color3(0, 0, 0);
                 this.groundMaterial.disableLighting = false;
             }
         }
-        this.textureDirty = true;
     }
 
-    private updateTexture(): void {
+    // --- Update State Texture (CPU -> GPU) ---
+
+    private updateStateTexture(): void {
         const size = this.GRID_SIZE;
-        const imgData = this.ctx.createImageData(size, size);
-        const data = imgData.data;
 
-        if (this.waterOverlayEnabled) {
-            // HEATMAP MODE
-            for (let i = 0; i < this.moistureData.length; i++) {
-                const moisture = this.moistureData[i];
-                const normalized = moisture / 100;
+        for (let i = 0; i < this.moistureData.length; i++) {
+            const x = i % size;
+            const z = Math.floor(i / size);
+            // Flip Y for texture coordinates
+            const imgY = size - 1 - z;
+            const texIndex = (imgY * size + x) * 4;
 
-                // Index in the texture data (flip Y to match grid)
-                const x = i % size;
-                const z = Math.floor(i / size);
-                // Grid (0,0) is bottom-left (z=0), but image (0,0) is top-left.
-                // We need to map grid Z to image Y such that Z=0 -> Y=size-1
-                const imgY = size - 1 - z;
-                const dataIndex = (imgY * size + x) * 4;
-
-                // Blue channel: Always bright (200-255)
-                const b = Math.floor(200 + normalized * 55);
-                // Green channel: 0 -> 255 (creates blue -> cyan transition)
-                const g = Math.floor(normalized * 255);
-                // Red channel: slight hint at high moisture for "glow" effect
-                const r = Math.floor(normalized * 50);
-
-                data[dataIndex] = r;
-                data[dataIndex + 1] = g;
-                data[dataIndex + 2] = b;
-                data[dataIndex + 3] = 255; // Alpha
-            }
-        } else {
-            // NORMAL MODE
-            for (let i = 0; i < this.moistureData.length; i++) {
-                const moisture = this.moistureData[i];
-
-                const x = i % size;
-                const z = Math.floor(i / size);
-                const imgY = size - 1 - z;
-                const dataIndex = (imgY * size + x) * 4;
-
-                // Base soil color blended with moisture darkening
-                const t = moisture / 100;
-                const r = 180 - t * 120;
-                const g = 140 - t * 100;
-                const b = 100 - t * 75;
-
-                data[dataIndex] = Math.floor(r);
-                data[dataIndex + 1] = Math.floor(g);
-                data[dataIndex + 2] = Math.floor(b);
-                data[dataIndex + 3] = 255; // Alpha
-            }
+            this.stateTextureData[texIndex] = this.moistureData[i];     // R = Moisture
+            this.stateTextureData[texIndex + 1] = this.nitrogenData[i]; // G = Nitrogen
+            this.stateTextureData[texIndex + 2] = 0;                    // B = unused
+            this.stateTextureData[texIndex + 3] = 1;                    // A = 1
         }
 
-        this.ctx.putImageData(imgData, 0, 0);
-        this.moistureTexture.update();
+        this.stateTexture.update(this.stateTextureData);
         this.textureDirty = false;
     }
 
-    private debugTimer: number = 0;
+    // --- System Update ---
 
-    public update(_deltaTime: number): void {
-        // Find TimeSystem if missing (cannot inject in constructor due to cycle or load order)
+    public update(deltaTime: number): void {
         if (!this.timeSystem) {
             const timeSystem = this.world.getSystem(TimeSystem);
             if (timeSystem) this.timeSystem = timeSystem as TimeSystem;
         }
 
-        // Apply rain if it's raining
-        // Apply rain if it's raining
+        // Apply rain
         if (this.timeSystem && this.timeSystem.rainIntensity > 0) {
-            // Scale rain by deltaTime
-            const rainAmount = this.timeSystem.rainIntensity * 1.5 * _deltaTime;
+            const rainAmount = this.timeSystem.rainIntensity * 1.5 * deltaTime;
             for (let i = 0; i < this.moistureData.length; i++) {
-                // Rain falls directly into soil, up to saturation
                 const current = this.moistureData[i];
                 if (current < this.SATURATION_THRESHOLD) {
                     this.moistureData[i] = Math.min(this.SATURATION_THRESHOLD, current + rainAmount);
@@ -379,19 +350,19 @@ export class SoilSystem extends System {
             this.textureDirty = true;
         }
 
-        // Run diffusion simulation
-        this.diffuse(_deltaTime);
+        // Run CPU diffusion
+        this.diffuse(deltaTime);
 
-        // Global evaporation
-        this.evaporate(_deltaTime);
+        // Run CPU evaporation
+        this.evaporate(deltaTime);
 
-        // Update texture if dirty
+        // Upload to GPU if dirty
         if (this.textureDirty) {
-            this.updateTexture();
+            this.updateStateTexture();
         }
 
-        // Debug Logging (every 1 second)
-        this.debugTimer += _deltaTime;
+        // Debug
+        this.debugTimer += deltaTime;
         if (this.debugTimer > 1.0) {
             this.debugTimer = 0;
             this.logStats();
@@ -418,10 +389,7 @@ export class SoilSystem extends System {
 
     private diffuse(deltaTime: number): void {
         const size = this.GRID_SIZE;
-        // Adjust rates by deltaTime, but CLAMP them to prevent locking/exploding on lag spikes
-        // Max safe rate per neighbor (4 neighbors) is 0.25. Let's stay well below that.
-        const dt = Math.min(deltaTime, 0.05); // Cap physics step at 20fps equivalent (50ms)
-
+        const dt = Math.min(deltaTime, 0.05);
         const diffusionRate = Math.min(0.2, this.DIFFUSION_RATE * dt * 60);
 
         for (let z = 0; z < size; z++) {
@@ -430,13 +398,11 @@ export class SoilSystem extends System {
                 const currentMoisture = this.moistureData[index];
                 const currentNitrogen = this.nitrogenData[index];
 
-                // Direct neighbor access using offsets
                 let moistureOutflow = 0;
                 let moistureInflow = 0;
                 let nitrogenOutflow = 0;
                 let nitrogenInflow = 0;
 
-                // Helper to check neighbor for moisture
                 const checkMoistureNeighbor = (nIndex: number) => {
                     const neighborMoisture = this.moistureData[nIndex];
                     const diff = currentMoisture - neighborMoisture;
@@ -447,7 +413,6 @@ export class SoilSystem extends System {
                     }
                 };
 
-                // Helper to check neighbor for nitrogen
                 const checkNitrogenNeighbor = (nIndex: number) => {
                     const neighborNitrogen = this.nitrogenData[nIndex];
                     const diff = currentNitrogen - neighborNitrogen;
@@ -458,34 +423,27 @@ export class SoilSystem extends System {
                     }
                 };
 
-                // West (x-1)
                 if (x > 0) {
                     const nIndex = index - 1;
                     checkMoistureNeighbor(nIndex);
                     checkNitrogenNeighbor(nIndex);
                 }
-                // East (x+1)
                 if (x < size - 1) {
                     const nIndex = index + 1;
                     checkMoistureNeighbor(nIndex);
                     checkNitrogenNeighbor(nIndex);
                 }
-                // South (z-1)
                 if (z > 0) {
                     const nIndex = index - size;
                     checkMoistureNeighbor(nIndex);
                     checkNitrogenNeighbor(nIndex);
                 }
-                // North (z+1)
                 if (z < size - 1) {
                     const nIndex = index + size;
                     checkMoistureNeighbor(nIndex);
                     checkNitrogenNeighbor(nIndex);
                 }
 
-                // Balance flows - Ensure we don't give away more than we have
-
-                // 2. Moisture Normalization
                 const totalMoistureOut = moistureOutflow;
                 let actualMoistureOutflow = moistureOutflow;
 
@@ -494,7 +452,6 @@ export class SoilSystem extends System {
                     actualMoistureOutflow *= ratio;
                 }
 
-                // 3. Nitrogen Normalization
                 const totalNitrogenOut = nitrogenOutflow;
                 let actualNitrogenOutflow = nitrogenOutflow;
 
@@ -520,33 +477,21 @@ export class SoilSystem extends System {
         this.textureDirty = true;
     }
 
-    public setLightingSystem(lightingSystem: LightingSystem): void {
-        this.lightingSystem = lightingSystem;
-    }
-
     private evaporate(deltaTime: number): void {
-        // Initialize next buffers with current data for cells that won't change
         for (let i = 0; i < this.moistureData.length; i++) {
             this.nextMoistureData[i] = this.moistureData[i];
         }
 
         for (let i = 0; i < this.moistureData.length; i++) {
             const current = this.moistureData[i];
-
             if (current <= 0) continue;
 
-            // Scale evaporation by deltaTime
-            // Surface water evaporates fast, soil moisture evaporates slow
             let soilEvapRate = this.SOIL_EVAPORATION_RATE * deltaTime * 60;
 
-            if (this.lightingSystem) {
-                // Check if in shadow (simple check for now, later use shadow map if available)
-                // For now, let's assume if it's night, evaporation is lower
-                if (this.timeSystem) {
-                    const isDay = this.timeSystem.getSunIcon() === "☀️";
-                    if (!isDay) {
-                        soilEvapRate *= this.SHADOW_EVAP_MULTIPLIER;
-                    }
+            if (this.timeSystem) {
+                const isDay = this.timeSystem.getSunIcon() === "☀️";
+                if (!isDay) {
+                    soilEvapRate *= this.SHADOW_EVAP_MULTIPLIER;
                 }
             }
 
@@ -555,15 +500,17 @@ export class SoilSystem extends System {
                 this.nextMoistureData[i] -= change;
             }
 
-            // Only update texture if significant change
             if (soilEvapRate > 0) {
                 this.textureDirty = true;
             }
         }
 
-        // Swap buffers
         const tempMoisture = this.moistureData;
         this.moistureData = this.nextMoistureData;
         this.nextMoistureData = tempMoisture;
+    }
+
+    public setLightingSystem(_lightingSystem: LightingSystem): void {
+        // Not used
     }
 }

@@ -24,11 +24,22 @@ export class RenderSystem extends System {
     private scene: BABYLON.Scene;
     private engine: BABYLON.Engine;
     private gameEngine: Engine;
+
+    // Legacy support for non-thin-instance entities (Buildings, DeadPlants)
     private entityMeshes: Map<EntityID, BABYLON.Mesh> = new Map();
+
     private statusLabelsContainer: HTMLElement | null;
     private statusLabels: Map<EntityID, HTMLElement> = new Map();
     private lightingSystem: LightingSystem | null = null;
     private waterOverlayEnabled: boolean = false;
+
+    // Thin Instance Management for Plants
+    private sourceMeshes: Map<PlantStage, BABYLON.Mesh> = new Map();
+    // Maps EntityID to { stage, thinInstanceIndex }
+    private entityInstanceMap: Map<EntityID, { stage: PlantStage, index: number }> = new Map();
+    // Maps PlantStage to list of copy-of-EntityIDs physically located at that index
+    // instanceOwners.get("sprout")[5] is the EntityID owning the 5th thin instance of sprout mesh
+    private instanceOwners: Map<PlantStage, EntityID[]> = new Map();
 
     // Rain Particle System
     private rainSystem: BABYLON.GPUParticleSystem | null = null;
@@ -41,8 +52,43 @@ export class RenderSystem extends System {
         this.engine = this.gameEngine.getEngine();
         this.statusLabelsContainer = document.getElementById("status-labels");
 
+        // Initialize reusable source meshes for plants
+        this.initializeSourceMeshes();
+
         // Initialize Rain
         this.initializeRain();
+    }
+
+    private initializeSourceMeshes(): void {
+        const stages: PlantStage[] = ["seed", "sprout", "vegetative", "flowering"];
+
+        for (const stage of stages) {
+            const config = STAGE_MESHES[stage];
+            const mesh = BABYLON.MeshBuilder.CreateCylinder(`source_${stage}`, {
+                height: config.height,
+                diameter: config.diameter,
+                tessellation: 8,
+                subdivisions: 1
+            }, this.scene);
+
+            // Hide the source mesh itself, but enable it for instances
+            mesh.isVisible = false;
+
+            const mat = new BABYLON.StandardMaterial(`mat_${stage}`, this.scene);
+            mat.diffuseColor = new BABYLON.Color3(1, 1, 1); // White base, tinted by instance color
+            mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+            mesh.material = mat;
+
+            // Register instance buffer for Color (4 floats)
+            mesh.registerInstancedBuffer("color", 4);
+            mesh.instancedBuffers.color = new BABYLON.Color4(0.2, 0.6, 0.2, 1); // Default green
+
+            // Prevent culling issues if instances spread wide
+            mesh.alwaysSelectAsActiveMesh = true;
+
+            this.sourceMeshes.set(stage, mesh);
+            this.instanceOwners.set(stage, []);
+        }
     }
 
     private initializeRain(): void {
@@ -101,6 +147,10 @@ export class RenderSystem extends System {
 
     public setLightingSystem(lightingSystem: LightingSystem): void {
         this.lightingSystem = lightingSystem;
+        // Register shadow casters for the source meshes
+        for (const mesh of this.sourceMeshes.values()) {
+            this.lightingSystem.addShadowCaster(mesh);
+        }
     }
 
     public setWaterOverlay(enabled: boolean): void {
@@ -121,8 +171,24 @@ export class RenderSystem extends System {
             this.rainSystem.emitRate = intensity * 5000; // Max 5000 particles/sec
         }
 
-        const entities = this.world.getEntitiesWithComponent(PlantState);
+        // 3. Update Plants (Thin Instances)
+        this.updatePlants(deltaTime);
+
         const activeEntityIds = new Set<EntityID>();
+        const plantEntities = this.world.getEntitiesWithComponent(PlantState);
+        for (const e of plantEntities) activeEntityIds.add(e.id);
+
+        // 4. Update Buildings and Dead Plants (Standard Meshes)
+        this.updateBuildings(activeEntityIds);
+        this.updateDeadPlants(activeEntityIds);
+
+        // 5. Cleanup removed entities (Standard Meshes)
+        this.cleanupStandardMeshes(activeEntityIds);
+    }
+
+    private updatePlants(deltaTime: number): void {
+        const entities = this.world.getEntitiesWithComponent(PlantState);
+        const currentTickPlantIds = new Set<EntityID>();
 
         for (const entity of entities) {
             const state = entity.getComponent(PlantState);
@@ -130,47 +196,237 @@ export class RenderSystem extends System {
             const needs = entity.getComponent(Needs);
 
             if (!state || !transform) continue;
-            activeEntityIds.add(entity.id);
+            currentTickPlantIds.add(entity.id);
 
-            let mesh = this.entityMeshes.get(entity.id);
+            // Check if existing
+            const instanceRecord = this.entityInstanceMap.get(entity.id);
 
-            // Create mesh if it doesn't exist or stage changed
-            if (!mesh || state.stageChanged) {
-                if (mesh) mesh.dispose();
-                mesh = this.createPlantMesh(entity.id, state.stage, transform);
-                this.entityMeshes.set(entity.id, mesh);
-                state.stageChanged = false;
+            // Case 1: New Plant or Stage Changed
+            if (!instanceRecord || state.stageChanged) {
+                // If existed but stage changed, remove old instance first
+                if (instanceRecord) {
+                    this.removeInstance(entity.id, instanceRecord.stage, instanceRecord.index);
+                    state.stageChanged = false;
+                }
+
+                // Add new instance
+                this.addInstance(entity.id, state.stage, transform);
             }
 
-            // Update color based on health and needs
-            this.updatePlantAppearance(mesh, state, needs, deltaTime);
-
-            // Update status label
-            this.updateStatusLabel(entity.id, mesh, state, needs);
-
+            // Case 2: Update Appearance (Color, Transform/Droop)
+            // We need to re-fetch the potentially new index/record
+            const currentRecord = this.entityInstanceMap.get(entity.id);
+            if (currentRecord) {
+                this.updatePlantAppearance(entity.id, currentRecord, state, needs, transform, deltaTime);
+                this.updateStatusLabel(entity.id, state, needs, transform);
+            }
         }
 
-        this.updateBuildings(activeEntityIds);
-        this.updateDeadPlants(activeEntityIds);
+        // Cleanup Removed Plants
+        // We look for IDs in our map that are NOT in currentTickPlantIds
+        // IMPORTANT: We need to iterate over a COPY of the keys because we will delete from the map
+        const trackedIds = Array.from(this.entityInstanceMap.keys());
+        for (const id of trackedIds) {
+            if (!currentTickPlantIds.has(id)) {
+                const record = this.entityInstanceMap.get(id)!;
+                if (record) {
+                    this.removeInstance(id, record.stage, record.index);
+                }
 
-        // Cleanup removed entities
-        this.cleanupRemovedEntities(activeEntityIds);
+                // Cleanup label
+                const label = this.statusLabels.get(id);
+                if (label) {
+                    label.remove();
+                    this.statusLabels.delete(id);
+                }
+            }
+        }
     }
 
-    private updateBuildings(activeIds: Set<EntityID>): void {
-        const entities = this.world.getEntitiesWithComponent(BuildingState);
-        for (const entity of entities) {
-            const state = entity.getComponent(BuildingState);
-            const transform = entity.getComponent(TransformComponent);
+    private addInstance(entityId: EntityID, stage: PlantStage, transform: TransformComponent): void {
+        const mesh = this.sourceMeshes.get(stage);
+        const ownerList = this.instanceOwners.get(stage);
 
-            if (!state || !state.type || !transform) continue;
-            activeIds.add(entity.id);
+        if (!mesh || !ownerList) return;
 
-            let mesh = this.entityMeshes.get(entity.id);
-            if (!mesh) {
-                mesh = this.createBuildingMesh(entity.id, state.type, transform);
-                this.entityMeshes.set(entity.id, mesh);
+        // Calculate initial matrix
+        const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
+        const meshY = terrainY + STAGE_MESHES[stage].height / 2;
+
+        const matrix = BABYLON.Matrix.Compose(
+            new BABYLON.Vector3(1, 1, 1), // Scaling
+            new BABYLON.Quaternion(),     // Rotation
+            new BABYLON.Vector3(transform.x, meshY, transform.z) // Translation
+        );
+
+        // Add instance to mesh
+        const index = mesh.thinInstanceAdd(matrix);
+
+        // Track ownership
+        ownerList[index] = entityId; // Should correspond to the returned index usually, which is count-1
+
+        this.entityInstanceMap.set(entityId, { stage, index });
+    }
+
+    private removeInstance(entityId: EntityID, stage: PlantStage, indexToRemove: number): void {
+        const mesh = this.sourceMeshes.get(stage);
+        const ownerList = this.instanceOwners.get(stage);
+
+        if (!mesh || !ownerList) return;
+
+        // ThinInstance "Swap and Remove" logic
+        const count = mesh.thinInstanceCount;
+        if (count === 0) return;
+
+        if (indexToRemove === count - 1) {
+            // Simple remove if it's the last one
+            mesh.thinInstanceCount--;
+            ownerList.pop();
+            this.entityInstanceMap.delete(entityId);
+        } else {
+            // Swap with last
+            const lastIndex = count - 1;
+            const lastOwnerId = ownerList[lastIndex];
+
+            // 1. Move last instance's matrix to the hole
+            // We need to copy matrix from lastIndex to indexToRemove
+            const matrices = mesh.thinInstanceGetWorldMatrices();
+            matrices[indexToRemove].copyFrom(matrices[lastIndex]);
+
+            // 2. Decrement count (removes the last one conceptually)
+            mesh.thinInstanceCount--;
+
+            // 3. Update Instance Map for the swapped entity
+            const swappedRecord = this.entityInstanceMap.get(lastOwnerId);
+            if (swappedRecord) {
+                swappedRecord.index = indexToRemove;
             }
+
+            // 4. Update Owner List
+            ownerList[indexToRemove] = lastOwnerId;
+            ownerList.pop();
+
+            // 5. Remove the deleted entity from map
+            this.entityInstanceMap.delete(entityId);
+
+            // 6. Force update appearance of the swapped entity to ensure color buffer is correct
+            // (Since we didn't manually copy the color buffer)
+            const swappedEntity = this.world.getEntity(lastOwnerId);
+            if (swappedEntity) {
+                const state = swappedEntity.getComponent(PlantState);
+                const transform = swappedEntity.getComponent(TransformComponent);
+                const needs = swappedEntity.getComponent(Needs);
+                if (state && transform) {
+                    // Start of frame deltaTime is good enough, or just 0 since we just want to set the static attrs
+                    this.updatePlantAppearance(lastOwnerId, { stage, index: indexToRemove }, state, needs, transform, 0.016);
+                }
+            }
+        }
+    }
+
+    private updatePlantAppearance(
+        entityId: EntityID,
+        record: { stage: PlantStage, index: number },
+        state: PlantState,
+        needs: Needs | undefined,
+        transform: TransformComponent,
+        deltaTime: number
+    ): void {
+        const mesh = this.sourceMeshes.get(record.stage);
+        if (!mesh) return;
+
+        // 1. Calculate Stress & Animations
+        this.updateStressLevel(state, needs);
+
+        const LERP_SPEED = 2.0;
+        const lerpFactor = Math.min(1, LERP_SPEED * deltaTime);
+
+        state.targetDroop = state.stressLevel >= 1 ? Math.min(1, state.stressLevel * 0.4) : 0;
+        state.targetDesaturation = state.stressLevel >= 2 ? Math.min(1, (state.stressLevel - 1) * 0.5) : 0;
+
+        state.currentDroop += (state.targetDroop - state.currentDroop) * lerpFactor;
+        state.currentDesaturation += (state.targetDesaturation - state.currentDesaturation) * lerpFactor;
+
+        // 2. Update Matrix (Approximating Droop with Rotation/Leaning)
+        // A simple "lean" based on droop amount. Randomize direction based on ID
+        const randomSeed = entityId * 12345;
+        const leanDirX = Math.sin(randomSeed);
+        const leanDirZ = Math.cos(randomSeed);
+        const leanAngle = state.currentDroop * (Math.PI / 4); // Max 45 deg lean
+
+        const rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
+            leanAngle * leanDirX,
+            0,
+            leanAngle * leanDirZ
+        );
+
+        const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
+        const config = STAGE_MESHES[state.stage];
+        const meshY = terrainY + config.height / 2;
+
+        const matrix = BABYLON.Matrix.Compose(
+            new BABYLON.Vector3(1, 1, 1),
+            rotationQuaternion,
+            new BABYLON.Vector3(transform.x, meshY, transform.z)
+        );
+
+        mesh.thinInstanceSetMatrixAt(record.index, matrix);
+
+        // 3. Update Color
+        let r = 0, g = 0, b = 0;
+
+        if (state.health <= 0) {
+            // Dead brown
+            r = 0.4; g = 0.25; b = 0.1;
+        } else {
+            // Base Green
+            const greenIntensity = state.stage === "flowering" ? 0.4 :
+                state.stage === "vegetative" ? 0.55 : 0.6;
+            const baseR = 0.2, baseG = greenIntensity, baseB = 0.2;
+
+            // Desaturation
+            const gray = (baseR + baseG + baseB) / 3;
+            const desat = state.currentDesaturation;
+
+            r = baseR + (gray - baseR) * desat;
+            g = baseG + (gray - baseG) * desat;
+            b = baseB + (gray - baseB) * desat;
+        }
+
+        // Overlay Glow (Mixing into base color or just brightening)
+        if (this.waterOverlayEnabled && needs && needs.lastAbsorption > 0) {
+            const intensity = Math.min(1, needs.lastAbsorption / 3);
+            // Mix with Blue
+            r = r * (1 - intensity) + (0.1) * intensity;
+            g = g * (1 - intensity) + (0.5) * intensity;
+            b = b * (1 - intensity) + (0.8) * intensity;
+            // Also boost value?
+        }
+
+        mesh.thinInstanceSetAttributeAt("color", record.index, [r, g, b, 1.0]);
+    }
+
+    /**
+     * Calculate stress level (0-3) based on plant needs
+     */
+    private updateStressLevel(state: PlantState, needs: Needs | undefined): void {
+        if (state.health <= 0 || state.inComa) {
+            state.stressLevel = 3;
+            return;
+        }
+        if (!needs) {
+            state.stressLevel = 0;
+            return;
+        }
+
+        if (needs.water < 15) {
+            state.stressLevel = 3;
+        } else if (needs.water < 30) {
+            state.stressLevel = 2;
+        } else if (needs.water < 40) {
+            state.stressLevel = 1;
+        } else {
+            state.stressLevel = 0;
         }
     }
 
@@ -226,39 +482,21 @@ export class RenderSystem extends System {
         return mesh;
     }
 
-    private createPlantMesh(entityId: EntityID, stage: PlantStage, transform: TransformComponent): BABYLON.Mesh {
-        const config = STAGE_MESHES[stage];
+    private updateBuildings(activeIds: Set<EntityID>): void {
+        const entities = this.world.getEntitiesWithComponent(BuildingState);
+        for (const entity of entities) {
+            const state = entity.getComponent(BuildingState);
+            const transform = entity.getComponent(TransformComponent);
 
-        // Use height segments for smooth droop animation via vertex manipulation
-        const mesh = BABYLON.MeshBuilder.CreateCylinder(`plant_${entityId}`, {
-            height: config.height,
-            diameter: config.diameter,
-            tessellation: 8,
-            subdivisions: 4,  // Height segments for droop animation
-            updatable: true,  // Allow vertex updates
-        }, this.scene);
+            if (!state || !state.type || !transform) continue;
+            activeIds.add(entity.id);
 
-        const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        mesh.position = new BABYLON.Vector3(transform.x, terrainY + config.height / 2, transform.z);
-        mesh.receiveShadows = true;
-
-        if (this.lightingSystem) {
-            this.lightingSystem.addShadowCaster(mesh);
+            let mesh = this.entityMeshes.get(entity.id);
+            if (!mesh) {
+                mesh = this.createBuildingMesh(entity.id, state.type, transform);
+                this.entityMeshes.set(entity.id, mesh);
+            }
         }
-
-        const mat = new BABYLON.StandardMaterial(`plantMat_${entityId}`, this.scene);
-        mat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2);
-        mesh.material = mat;
-
-        // Store original vertex positions for droop animation
-        const originalPositions = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
-        mesh.metadata = {
-            entityId,
-            originalPositions: originalPositions ? [...originalPositions] : null,
-            meshHeight: config.height
-        };
-
-        return mesh;
     }
 
     private createBuildingMesh(entityId: EntityID, type: string, transform: TransformComponent): BABYLON.Mesh {
@@ -309,121 +547,16 @@ export class RenderSystem extends System {
         return mesh;
     }
 
-    private updatePlantAppearance(mesh: BABYLON.Mesh, state: PlantState, needs: Needs | undefined, deltaTime: number): void {
-        if (!mesh || mesh.isDisposed() || !mesh.isEnabled()) return;
-        const mat = mesh.material as BABYLON.StandardMaterial;
-        if (!mat) return;
-
-        // Calculate stress level based on needs
-        this.updateStressLevel(state, needs);
-
-        // Smooth animation lerp speed (units per second)
-        const LERP_SPEED = 2.0;
-        const lerpFactor = Math.min(1, LERP_SPEED * deltaTime);
-
-        // Update droop animation targets based on stress level
-        state.targetDroop = state.stressLevel >= 1 ? Math.min(1, state.stressLevel * 0.4) : 0;
-        state.targetDesaturation = state.stressLevel >= 2 ? Math.min(1, (state.stressLevel - 1) * 0.5) : 0;
-
-        // Smooth lerp toward targets
-        state.currentDroop += (state.targetDroop - state.currentDroop) * lerpFactor;
-        state.currentDesaturation += (state.targetDesaturation - state.currentDesaturation) * lerpFactor;
-
-        // Apply droop animation via vertex manipulation
-        this.applyDroopAnimation(mesh, state.currentDroop);
-
-        // Apply desaturation to color
-        if (state.health <= 0) {
-            // Dead plant - brown color
-            mat.diffuseColor = new BABYLON.Color3(0.4, 0.25, 0.1);
-        } else {
-            // Calculate base green color based on stage
-            const greenIntensity = state.stage === "flowering" ? 0.4 :
-                state.stage === "vegetative" ? 0.55 : 0.6;
-            const baseColor = new BABYLON.Color3(0.2, greenIntensity, 0.2);
-
-            // Apply desaturation: lerp toward gray
-            const desatAmount = state.currentDesaturation;
-            const gray = (baseColor.r + baseColor.g + baseColor.b) / 3;
-            mat.diffuseColor = new BABYLON.Color3(
-                baseColor.r + (gray - baseColor.r) * desatAmount,
-                baseColor.g + (gray - baseColor.g) * desatAmount,
-                baseColor.b + (gray - baseColor.b) * desatAmount
-            );
-        }
-
-        // Water absorption glow when overlay is active
-        if (this.waterOverlayEnabled && needs && needs.lastAbsorption > 0) {
-            const intensity = Math.min(1, needs.lastAbsorption / 3);
-            mat.emissiveColor = new BABYLON.Color3(0.1 * intensity, 0.5 * intensity, 0.8 * intensity);
-        } else {
-            mat.emissiveColor = new BABYLON.Color3(0, 0, 0);
-        }
-    }
-
-    /**
-     * Calculate stress level (0-3) based on plant needs
-     * 0 = healthy, 1 = thirsty (droop), 2 = wilting (droop + desaturate), 3 = critical (+ icon)
-     */
-    private updateStressLevel(state: PlantState, needs: Needs | undefined): void {
-        if (state.health <= 0 || state.inComa) {
-            state.stressLevel = 3;
-            return;
-        }
-        if (!needs) {
-            state.stressLevel = 0;
-            return;
-        }
-
-        // Water-based stress thresholds
-        if (needs.water < 15) {
-            state.stressLevel = 3; // Critical - show icon
-        } else if (needs.water < 30) {
-            state.stressLevel = 2; // Wilting - droop + desaturate
-        } else if (needs.water < 40) {
-            state.stressLevel = 1; // Thirsty - droop only
-        } else {
-            state.stressLevel = 0; // Healthy
-        }
-    }
-
-    /**
-     * Apply droop animation by tilting top vertices
-     * @param mesh The plant mesh
-     * @param droopAmount 0 = upright, 1 = fully drooped
-     */
-    private applyDroopAnimation(mesh: BABYLON.Mesh, droopAmount: number): void {
-        if (!mesh.metadata?.originalPositions) return;
-
-        const originalPositions = mesh.metadata.originalPositions as number[];
-        const meshHeight = mesh.metadata.meshHeight as number || 1;
-        const positions = [...originalPositions];
-
-        // Maximum droop angle in radians (~30 degrees at full droop)
-        const maxDroopAngle = Math.PI / 6 * droopAmount;
-
-        // Apply droop: tilt vertices based on their height (Y position)
-        for (let i = 0; i < positions.length; i += 3) {
-            const y = originalPositions[i + 1]; // Local Y position
-
-            // Normalize Y to 0-1 range (bottom to top of mesh)
-            // Cylinder is centered, so Y ranges from -height/2 to +height/2
-            const normalizedY = (y + meshHeight / 2) / meshHeight;
-
-            // Only droop the upper portion of the plant (above 30%)
-            if (normalizedY > 0.3) {
-                const droopFactor = (normalizedY - 0.3) / 0.7; // 0 at 30%, 1 at top
-                const xOffset = Math.sin(maxDroopAngle) * droopFactor * meshHeight * 0.3;
-                const yOffset = -Math.abs(1 - Math.cos(maxDroopAngle)) * droopFactor * meshHeight * 0.1;
-
-                positions[i] += xOffset;     // X offset
-                positions[i + 1] += yOffset; // Y offset (slight droop down)
+    private cleanupStandardMeshes(activeIds: Set<EntityID>): void {
+        for (const [id, mesh] of this.entityMeshes) {
+            if (!activeIds.has(id)) {
+                mesh.dispose();
+                this.entityMeshes.delete(id);
             }
         }
-
-        mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
     }
 
+    // Helper for labels (also refactored to take transform instead of mesh)
     private getPlantStatus(state: PlantState, needs: Needs | undefined): PlantStatus {
         if (state.inComa) return "coma";
         if (state.health <= 0) return "dead";
@@ -445,8 +578,7 @@ export class RenderSystem extends System {
         }
     }
 
-    private updateStatusLabel(entityId: EntityID, mesh: BABYLON.Mesh, state: PlantState, needs: Needs | undefined): void {
-        if (!mesh || mesh.isDisposed() || !mesh.isEnabled()) return;
+    private updateStatusLabel(entityId: EntityID, state: PlantState, needs: Needs | undefined, transform: TransformComponent): void {
         if (!this.statusLabelsContainer) return;
 
         const status = this.getPlantStatus(state, needs);
@@ -464,8 +596,9 @@ export class RenderSystem extends System {
 
         // Project 3D position to 2D screen
         const config = STAGE_MESHES[state.stage];
-        const worldPos = mesh.position.clone();
-        worldPos.y += config.height / 2 + 0.3; // Above the plant
+        const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
+        // Use transform directly instead of mesh position
+        const worldPos = new BABYLON.Vector3(transform.x, terrainY + config.height + 0.3, transform.z); // Top of plant + offset
 
         const screenPos = BABYLON.Vector3.Project(
             worldPos,
@@ -484,21 +617,6 @@ export class RenderSystem extends System {
             label.style.display = "block";
             label.style.left = `${screenPos.x}px`;
             label.style.top = `${screenPos.y}px`;
-        }
-    }
-
-    private cleanupRemovedEntities(activeIds: Set<EntityID>): void {
-        for (const [id, mesh] of this.entityMeshes) {
-            if (!activeIds.has(id)) {
-                mesh.dispose();
-                this.entityMeshes.delete(id);
-            }
-        }
-        for (const [id, label] of this.statusLabels) {
-            if (!activeIds.has(id)) {
-                label.remove();
-                this.statusLabels.delete(id);
-            }
         }
     }
 }
