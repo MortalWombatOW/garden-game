@@ -63,7 +63,9 @@ export class SoilSystem extends System {
         this.nextNitrogenData = new Float32Array(size);
 
         // Create dynamic texture for soil visualization
-        this.moistureTexture = new BABYLON.DynamicTexture("soilMoisture", { width: 512, height: 512 }, this.scene, false);
+        // Match texture size to grid size for 1:1 pixel mapping
+        this.moistureTexture = new BABYLON.DynamicTexture("soilMoisture", { width: this.GRID_SIZE, height: this.GRID_SIZE }, this.scene, false);
+        this.moistureTexture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
         this.ctx = this.moistureTexture.getContext() as unknown as CanvasRenderingContext2D;
 
         if (this.groundMaterial) {
@@ -295,69 +297,60 @@ export class SoilSystem extends System {
     }
 
     private updateTexture(): void {
-        const pxPerCell = 512 / this.GRID_SIZE;
+        const size = this.GRID_SIZE;
+        const imgData = this.ctx.createImageData(size, size);
+        const data = imgData.data;
 
         if (this.waterOverlayEnabled) {
-            // HEATMAP MODE: Draw solid colors (no alpha - emissive textures don't blend well with alpha)
-            // Background: Very dark blue for "dry" areas
-            this.ctx.fillStyle = "#050510";
-            this.ctx.fillRect(0, 0, 512, 512);
+            // HEATMAP MODE
+            for (let i = 0; i < this.moistureData.length; i++) {
+                const moisture = this.moistureData[i];
+                const normalized = moisture / 100;
 
-            for (let x = -this.HALF_SIZE; x < this.HALF_SIZE; x++) {
-                for (let z = -this.HALF_SIZE; z < this.HALF_SIZE; z++) {
-                    const index = this.getIndex(x, z);
-                    if (index === -1) continue;
+                // Index in the texture data (flip Y to match grid)
+                const x = i % size;
+                const z = Math.floor(i / size);
+                // Grid (0,0) is bottom-left (z=0), but image (0,0) is top-left.
+                // We need to map grid Z to image Y such that Z=0 -> Y=size-1
+                const imgY = size - 1 - z;
+                const dataIndex = (imgY * size + x) * 4;
 
-                    const moisture = this.moistureData[index];
+                // Blue channel: Always bright (200-255)
+                const b = Math.floor(200 + normalized * 55);
+                // Green channel: 0 -> 255 (creates blue -> cyan transition)
+                const g = Math.floor(normalized * 255);
+                // Red channel: slight hint at high moisture for "glow" effect
+                const r = Math.floor(normalized * 50);
 
-                    const tx = (x + this.HALF_SIZE) * pxPerCell;
-                    const gridZ = z + this.HALF_SIZE;
-                    const ty = (this.GRID_SIZE - 1 - gridZ) * pxPerCell;
-
-                    // Gradient from dark blue (low moisture) to bright cyan (high moisture)
-                    // Use solid RGB colors since emissive textures work best without alpha
-                    const normalized = moisture / 100;
-
-                    // Soil moisture:
-                    // Blue channel: Always bright (200-255)
-                    const b = Math.floor(200 + normalized * 55);
-                    // Green channel: 0 -> 255 (creates blue -> cyan transition)
-                    const g = Math.floor(normalized * 255);
-                    // Red channel: slight hint at high moisture for "glow" effect
-                    const r = Math.floor(normalized * 50);
-
-                    this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                    this.ctx.fillRect(tx, ty, pxPerCell + 1, pxPerCell + 1);
-                }
+                data[dataIndex] = r;
+                data[dataIndex + 1] = g;
+                data[dataIndex + 2] = b;
+                data[dataIndex + 3] = 255; // Alpha
             }
         } else {
             // NORMAL MODE
-            this.ctx.fillStyle = "#8B4513";
-            this.ctx.fillRect(0, 0, 512, 512);
+            for (let i = 0; i < this.moistureData.length; i++) {
+                const moisture = this.moistureData[i];
 
-            for (let x = -this.HALF_SIZE; x < this.HALF_SIZE; x++) {
-                for (let z = -this.HALF_SIZE; z < this.HALF_SIZE; z++) {
-                    const index = this.getIndex(x, z);
-                    if (index === -1) continue;
+                const x = i % size;
+                const z = Math.floor(i / size);
+                const imgY = size - 1 - z;
+                const dataIndex = (imgY * size + x) * 4;
 
-                    const moisture = this.moistureData[index];
+                // Base soil color blended with moisture darkening
+                const t = moisture / 100;
+                const r = 180 - t * 120;
+                const g = 140 - t * 100;
+                const b = 100 - t * 75;
 
-                    const tx = (x + this.HALF_SIZE) * pxPerCell;
-                    const gridZ = z + this.HALF_SIZE;
-                    const ty = (this.GRID_SIZE - 1 - gridZ) * pxPerCell;
-
-                    // Base soil color blended with moisture darkening
-                    const t = moisture / 100;
-                    const r = 180 - t * 120;
-                    const g = 140 - t * 100;
-                    const b = 100 - t * 75;
-
-                    this.ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
-                    this.ctx.fillRect(tx, ty, pxPerCell + 1, pxPerCell + 1);
-                }
+                data[dataIndex] = Math.floor(r);
+                data[dataIndex + 1] = Math.floor(g);
+                data[dataIndex + 2] = Math.floor(b);
+                data[dataIndex + 3] = 255; // Alpha
             }
         }
 
+        this.ctx.putImageData(imgData, 0, 0);
         this.moistureTexture.update();
         this.textureDirty = false;
     }
