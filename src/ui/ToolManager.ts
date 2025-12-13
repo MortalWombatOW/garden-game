@@ -1,12 +1,15 @@
 
-export type ToolType = "plant" | "inspect" | "water" | null;
+export type ToolType = "plant" | "inspect" | "water" | "build" | "compost" | "harvest" | null;
+export type BuildingType = "lightpost" | "hose" | null;
 
 export class ToolManager {
     private currentTool: ToolType = "plant";
+    private activeBuildingType: BuildingType = "lightpost";
     private listeners: ((tool: ToolType) => void)[] = [];
 
     constructor() {
         this.setupToolbar();
+        this.setupBuildingMenu();
         this.setupKeyboard();
     }
 
@@ -16,6 +19,20 @@ export class ToolManager {
             btn.addEventListener("click", () => {
                 const tool = btn.dataset.tool as ToolType;
                 this.setTool(tool);
+            });
+        });
+    }
+
+    private setupBuildingMenu(): void {
+        const buttons = document.querySelectorAll<HTMLButtonElement>(".building-btn");
+        buttons.forEach(btn => {
+            btn.addEventListener("click", () => {
+                this.activeBuildingType = btn.dataset.building as BuildingType;
+                this.updateUI();
+                // Ensure we are in build mode
+                if (this.currentTool !== "build") {
+                    this.setTool("build");
+                }
             });
         });
     }
@@ -30,6 +47,12 @@ export class ToolManager {
                 this.setTool("inspect");
             } else if (e.key === "3") {
                 this.setTool("water");
+            } else if (e.key === "4") {
+                this.setTool("build");
+            } else if (e.key === "5") {
+                this.setTool("compost");
+            } else if (e.key === "6") {
+                this.setTool("harvest");
             }
         });
     }
@@ -42,6 +65,10 @@ export class ToolManager {
 
     public getTool(): ToolType {
         return this.currentTool;
+    }
+
+    public getActiveBuilding(): BuildingType {
+        return this.activeBuildingType;
     }
 
     public onToolChange(callback: (tool: ToolType) => void): void {
@@ -59,6 +86,25 @@ export class ToolManager {
         buttons.forEach(btn => {
             const tool = btn.dataset.tool as ToolType;
             if (tool === this.currentTool) {
+                btn.classList.add("active");
+            } else {
+                btn.classList.remove("active");
+            }
+        });
+
+        // Update Building Menu visibility
+        const buildingMenu = document.getElementById("building-menu");
+        if (this.currentTool === "build") {
+            buildingMenu?.classList.remove("hidden");
+        } else {
+            buildingMenu?.classList.add("hidden");
+        }
+
+        // Update Building Buttons
+        const buildingButtons = document.querySelectorAll<HTMLButtonElement>(".building-btn");
+        buildingButtons.forEach(btn => {
+            const type = btn.dataset.building as BuildingType;
+            if (type === this.activeBuildingType) {
                 btn.classList.add("active");
             } else {
                 btn.classList.remove("active");

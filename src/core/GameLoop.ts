@@ -1,11 +1,13 @@
 
 import { Engine } from "./Engine";
 import { World } from "./ECS";
+import { TimeSystem } from "../systems/TimeSystem";
 
 export class GameLoop {
     private engine: Engine;
     private world: World;
     private running: boolean = false;
+    private timeSystem: TimeSystem | null = null;
 
     // Time control
     public timeScale: number = 1.0;
@@ -20,12 +22,18 @@ export class GameLoop {
         this.world = world;
     }
 
+    public setTimeSystem(timeSystem: TimeSystem): void {
+        this.timeSystem = timeSystem;
+    }
+
     public start(): void {
         if (this.running) return;
         this.running = true;
 
         this.engine.getEngine().runRenderLoop(() => {
-            const deltaTime = this.engine.getEngine().getDeltaTime() * this.timeScale;
+            // Apply sleep time scale on top of user time scale
+            const sleepScale = this.timeSystem?.getSleepTimeScale() ?? 1;
+            const deltaTime = this.engine.getEngine().getDeltaTime() * this.timeScale * sleepScale;
 
             this.accumulator += deltaTime;
 

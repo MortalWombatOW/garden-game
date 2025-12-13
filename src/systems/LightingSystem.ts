@@ -17,6 +17,10 @@ export class LightingSystem extends System {
     private sunMesh: BABYLON.Mesh;
     private shadowGenerator: BABYLON.ShadowGenerator;
 
+    // Moon components
+    private moonLight: BABYLON.DirectionalLight;
+    private moonMesh: BABYLON.Mesh;
+
     // Skybox
     private skybox: BABYLON.Mesh;
     private skyboxMaterial: BABYLON.StandardMaterial;
@@ -43,6 +47,16 @@ export class LightingSystem extends System {
         this.sunLight.diffuse = new BABYLON.Color3(1, 0.95, 0.8);
         this.sunLight.specular = new BABYLON.Color3(1, 1, 0.9);
 
+        // Initialize moon light
+        this.moonLight = new BABYLON.DirectionalLight(
+            "moonLight",
+            new BABYLON.Vector3(1, -1, 0),
+            this.scene
+        );
+        this.moonLight.intensity = 0.5;
+        this.moonLight.diffuse = new BABYLON.Color3(0.8, 0.9, 1.0); // Cool white
+        this.moonLight.specular = new BABYLON.Color3(0.8, 0.9, 1.0);
+
         // Create sun mesh (visual representation)
         this.sunMesh = BABYLON.MeshBuilder.CreateSphere("sunMesh", { diameter: 8 }, this.scene);
         const sunMaterial = new BABYLON.StandardMaterial("sunMat", this.scene);
@@ -50,7 +64,14 @@ export class LightingSystem extends System {
         sunMaterial.disableLighting = true;
         this.sunMesh.material = sunMaterial;
 
-        // Enable shadows
+        // Create moon mesh
+        this.moonMesh = BABYLON.MeshBuilder.CreateSphere("moonMesh", { diameter: 6 }, this.scene);
+        const moonMaterial = new BABYLON.StandardMaterial("moonMat", this.scene);
+        moonMaterial.emissiveColor = new BABYLON.Color3(0.9, 0.95, 1);
+        moonMaterial.disableLighting = true;
+        this.moonMesh.material = moonMaterial;
+
+        // Enable shadows (Sun only for now to save performance)
         this.shadowGenerator = new BABYLON.ShadowGenerator(1024, this.sunLight);
         this.shadowGenerator.useBlurExponentialShadowMap = true;
         this.shadowGenerator.blurKernel = 32;
@@ -73,16 +94,16 @@ export class LightingSystem extends System {
         this.ambientLight.groundColor = new BABYLON.Color3(0.1, 0.1, 0.15);
 
         // Set initial position
-        this.updateSunPosition();
+        this.updateCelestialPositions();
         this.updateSkyColors();
     }
 
     public update(_deltaTime: number): void {
-        this.updateSunPosition();
+        this.updateCelestialPositions();
         this.updateSkyColors();
     }
 
-    private updateSunPosition(): void {
+    private updateCelestialPositions(): void {
         const timeOfDay = this.timeSystem.getTimeOfDayFraction();
 
         // Convert time to angle: 0.5 (noon) = sun at highest point
@@ -96,23 +117,39 @@ export class LightingSystem extends System {
 
         this.sunMesh.position.set(x, y, z);
 
-        // Update light direction (pointing from sun towards origin)
+        // Sun logic
         this.sunLight.direction = this.sunMesh.position.negate().normalize();
 
-        // Adjust light intensity based on sun height
         const sunHeight = Math.max(0, y);
-        const heightRatio = Math.min(1, sunHeight / this.SUN_DISTANCE);
-        this.sunLight.intensity = heightRatio * 0.8 + 0.1; // Range 0.1 to 0.9
+        const sunHeightRatio = Math.min(1, sunHeight / this.SUN_DISTANCE);
+        this.sunLight.intensity = sunHeightRatio * 0.8 + 0.1; // Range 0.1 to 0.9
 
         // Adjust sun color based on height (warmer at horizon)
-        if (heightRatio < 0.3) {
-            const t = heightRatio / 0.3;
+        if (sunHeightRatio < 0.3) {
+            const t = sunHeightRatio / 0.3;
             this.sunLight.diffuse = BABYLON.Color3.Lerp(
                 new BABYLON.Color3(1, 0.5, 0.2), // Orange at horizon
                 new BABYLON.Color3(1, 0.95, 0.8), // Yellow-white at noon
                 t
             );
         }
+
+        // Moon logic (Opposite to sun)
+        // We can just negate the sun position relative to center, but we want to maintain the offset logic if needed.
+        // Simplest is to just use angle + PI
+        const moonAngle = angle + Math.PI;
+        const moonX = Math.cos(moonAngle) * this.SUN_DISTANCE;
+        const moonY = Math.sin(moonAngle) * this.SUN_DISTANCE + this.SUN_HEIGHT_OFFSET;
+
+        this.moonMesh.position.set(moonX, moonY, z);
+        this.moonLight.direction = this.moonMesh.position.negate().normalize();
+
+        const moonHeight = Math.max(0, moonY);
+        const moonHeightRatio = Math.min(1, moonHeight / this.SUN_DISTANCE);
+
+        // Moon intensity: 0.7 relative strength (requested)
+        // Only active when above horizon
+        this.moonLight.intensity = moonHeightRatio * 0.7;
     }
 
     private updateSkyColors(): void {

@@ -76,6 +76,20 @@ export class World {
         }
     }
 
+    public getSystem<T extends System>(systemClass: { new(...args: any[]): T }): T | undefined {
+        for (const system of this.fixedSystems) {
+            if (system instanceof systemClass) {
+                return system as T;
+            }
+        }
+        for (const system of this.renderSystems) {
+            if (system instanceof systemClass) {
+                return system as T;
+            }
+        }
+        return undefined;
+    }
+
     public updateFixed(deltaTime: number): void {
         for (const system of this.fixedSystems) {
             system.update(deltaTime);
