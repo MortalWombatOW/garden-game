@@ -154,8 +154,8 @@ npm run dev
   - [] separate plant age into 2 parts: age and sunlit age
   - [] water view showing flow of water from soil to plants/evaporation
   - [] procedural generation of plants using L-systems and simplified genetics
-  - [] streams + ponds (always 100% moisture), stone paths (always 0% moisture)
-  - [] rain events
+  - [] add custom ground types: ponds (always 100% moisture), stone paths (always 0% moisture)
+  - [x] rain events
   - [] weather events (wind, snow, hail, etc.)
   - [x] 3d terrain generation
   - [] procedural generation of soil
