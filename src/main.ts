@@ -49,7 +49,7 @@ world.addSystem(lightingSystem);
 
 // Wire lighting dependencies after lightingSystem is created
 soilSystem.setLightingSystem(lightingSystem);
-const growthSystem = new GrowthSystem(world, timeSystem, soilSystem);
+const growthSystem = new GrowthSystem(world, timeSystem, soilSystem, spatialHash);
 growthSystem.setLightingSystem(lightingSystem);
 world.addSystem(growthSystem);
 

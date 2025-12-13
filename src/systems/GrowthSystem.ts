@@ -6,6 +6,7 @@ import { TransformComponent } from "../components/TransformComponent";
 import { DeadPlantState } from "../components/DeadPlantState";
 import { TimeSystem } from "./TimeSystem";
 import { SoilSystem } from "./SoilSystem";
+import { SpatialHashGrid } from "../core/SpatialHashGrid";
 import type { LightingSystem } from "./LightingSystem";
 
 // Root radius (in world units) by growth stage - exported for visualization
@@ -25,6 +26,7 @@ const STAGE_MULTIPLIER: Record<string, number> = {
 export class GrowthSystem extends System {
     private timeSystem: TimeSystem;
     private soilSystem: SoilSystem;
+    private spatialHash: SpatialHashGrid;
     private lightingSystem: LightingSystem | null = null;
 
     // Sunlight cache to avoid expensive raycasts every tick
@@ -37,10 +39,11 @@ export class GrowthSystem extends System {
     private readonly SHADE_GROWTH_MULTIPLIER = 0.3; // Growth rate in shade (30% of full sun)
     private readonly MIN_LIGHT_FOR_GROWTH = 0.1; // Minimum sunlight to grow at all
 
-    constructor(world: World, timeSystem: TimeSystem, soilSystem: SoilSystem) {
+    constructor(world: World, timeSystem: TimeSystem, soilSystem: SoilSystem, spatialHash: SpatialHashGrid) {
         super(world, SystemType.FIXED);
         this.timeSystem = timeSystem;
         this.soilSystem = soilSystem;
+        this.spatialHash = spatialHash;
     }
 
     public setLightingSystem(lightingSystem: LightingSystem): void {
@@ -131,28 +134,42 @@ export class GrowthSystem extends System {
             const myDominance = state.age * (STAGE_MULTIPLIER[state.stage] || 1);
 
             // Check for overlapping root zones and calculate competition penalty
+            // Check for overlapping root zones using spatial hash for O(N) performance
+            // We search for neighbors within the max possible dual radius (my radius + max possible neighbor radius)
+            // Max plant radius is ~2.5 (flowering), so we query with a safe margin
+            const queryRadius = rootRadius + 2.5;
+            const neighborIds = this.spatialHash.query(transform.x, transform.z, queryRadius);
+
             let competitionPenalty = 0;
-            for (const otherEntity of entities) {
-                if (otherEntity.id === entity.id) continue;
+
+            for (const neighborId of neighborIds) {
+                if (neighborId === entity.id) continue;
+
+                const otherEntity = this.world.getEntity(neighborId);
+                if (!otherEntity) continue;
 
                 const otherState = otherEntity.getComponent(PlantState);
                 const otherTransform = otherEntity.getComponent(TransformComponent);
+
+                // Only compete with living plants
                 if (!otherState || !otherTransform || otherState.health <= 0) continue;
 
                 const otherRadius = ROOT_RADIUS[otherState.stage] || 1.0;
                 const dx = transform.x - otherTransform.x;
                 const dz = transform.z - otherTransform.z;
-                const distance = Math.sqrt(dx * dx + dz * dz);
+                const distanceSq = dx * dx + dz * dz;
+                const radiusSum = rootRadius + otherRadius;
 
-                // Check if root zones overlap
-                if (distance < rootRadius + otherRadius) {
+                // Check if root zones overlap (squared distance check is faster)
+                if (distanceSq < radiusSum * radiusSum) {
+                    const distance = Math.sqrt(distanceSq);
                     const otherDominance = otherState.age * (STAGE_MULTIPLIER[otherState.stage] || 1);
 
                     // If the other plant is more dominant, this plant gets penalized
                     if (otherDominance > myDominance) {
                         // Penalty is proportional to how much more dominant the other plant is
                         // and how much the zones overlap
-                        const overlap = 1 - (distance / (rootRadius + otherRadius));
+                        const overlap = 1 - (distance / radiusSum);
                         const dominanceRatio = Math.min(2, otherDominance / Math.max(0.1, myDominance));
                         competitionPenalty += overlap * 0.4 * dominanceRatio;
                     }
@@ -209,8 +226,9 @@ export class GrowthSystem extends System {
         const deadPlantState = new DeadPlantState(state.stage);
         entity.addComponent(deadPlantState);
 
-        // Clean up cache
+        // Clean up cache and spatial hash
         this.removeFromCache(entity.id);
+        this.spatialHash.remove(entity.id);
 
         console.log(`Plant ${entity.id} died and is now decomposing`);
     }
