@@ -52,12 +52,11 @@ While the visuals are free-form, the simulation relies on a high-resolution 2D d
 
 #### 2\. The Plant Entity (ECS)
 
-Plants are not standard GameObjects. They are data entities managed by a `ThinInstance` renderer for performance (1000+ plants).
+Plants are data entities managed by the `RenderSystem` which creates individual meshes per plant. The ECS uses **O(1) component caching** for efficient entity queries.
 
   * **`TransformComponent`**: Float32 position $(x, y, z)$.
-  * **`GeneticsComponent`**: Defines optimal ranges for Light/Water and mutation probability.
-  * **`MetabolismComponent`**: Stores current accumulated energy and stress.
-      * *Logic:* If `Stress > Threshold` for $N$ ticks $\rightarrow$ `State = DEAD`.
+  * **`PlantState`**: Stage, health, stress level, and **`isDirty`** flag for reactive rendering.
+  * **`Needs`**: Water level and absorption tracking.
 
 #### 3\. Environmental Systems
 
@@ -161,3 +160,4 @@ npm run dev
   - [] procedural generation of soil
   - [] procedural generation of wildlife
   - [] planters
+  - [] plant detail view with genetics and needs

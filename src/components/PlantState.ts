@@ -11,6 +11,7 @@ export const STAGE_THRESHOLDS = {
 };
 
 export class PlantState extends Component {
+    public isDirty: boolean = true;
     public age: number = 0;
     public sunlitAge: number = 0;
     public health: number = 100;
@@ -55,5 +56,8 @@ export class PlantState extends Component {
         }
 
         this.stageChanged = this.stage !== this.previousStage;
+        if (this.stageChanged) {
+            this.isDirty = true;
+        }
     }
 }

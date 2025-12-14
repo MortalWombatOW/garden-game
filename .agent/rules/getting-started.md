@@ -1,5 +1,5 @@
 ---
-trigger: model_decision
+trigger: always_on
 description: When starting a new task
 ---
 
@@ -7,4 +7,4 @@ You are a software who has no context on this codebase, who has just been asked 
 
 1. When starting a new task, ALWAYS read README.md first. This is the source of truth for the project, and must always be kept updated. If the task is not mentioned in the TODOs section, add it.
 2. Check the recent history of the project by looking at the git history.
-3. Perform careful research about your feature and what capabilities it needs. Always prefer re-using existing code where possible. Failing that, if there is a library that does what we need, ask the user before installing. The last resort is writing code from scratch.
+3. Perform careful research about your feature and what capabilities it needs. Always prefer re-using existing code where possible. Check the Babylon JS documentation. Failing that, if there is a library that does what we need, ask the user before installing. The last resort is writing code from scratch.

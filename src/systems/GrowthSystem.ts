@@ -82,7 +82,10 @@ export class GrowthSystem extends System {
         if (needsLightingRefresh) {
             this.lastLightingUpdateHour = currentGameHour;
             // Clean up stale cache entries for removed plants
-            const currentEntityIds = new Set(entities.map(e => e.id));
+            const currentEntityIds = new Set<number>();
+            for (const e of entities) {
+                currentEntityIds.add(e.id);
+            }
             this.cleanupStaleEntries(currentEntityIds);
         }
 
@@ -95,6 +98,8 @@ export class GrowthSystem extends System {
 
             // Skip dead plants (but NOT coma plants - they need water processing for revival)
             if (state.health <= 0 && !state.inComa) continue;
+
+            const previousWater = needs.water;
 
             // Get sunlight intensity using lazy cache update
             let sunIntensity = 1.0;
@@ -189,6 +194,7 @@ export class GrowthSystem extends System {
             const effectiveWaterWanted = waterWanted * (1 - competitionPenalty);
 
             // Try to absorb water from soil
+            const prevAbsorption = needs.lastAbsorption;
             const absorbed = this.soilSystem.absorbWater(
                 transform.x,
                 transform.z,
@@ -205,6 +211,21 @@ export class GrowthSystem extends System {
             const transpirationMultiplier = this.SHADE_GROWTH_MULTIPLIER + (1 - this.SHADE_GROWTH_MULTIPLIER) * sunIntensity;
             const transpiration = gameHoursDelta * 1.5 * transpirationMultiplier; // Lose 1.5% per game-hour at full sun
             needs.water = Math.max(0, needs.water - transpiration);
+
+            // Check if water crossed stress thresholds (15, 30, 40)
+            const stressThresholds = [15, 30, 40];
+            for (const threshold of stressThresholds) {
+                if ((previousWater >= threshold && needs.water < threshold) ||
+                    (previousWater < threshold && needs.water >= threshold)) {
+                    state.isDirty = true;
+                    break;
+                }
+            }
+
+            // Mark dirty if absorption changed significantly (handles turn on/off and intensity changes)
+            if (Math.abs(needs.lastAbsorption - prevAbsorption) > 0.001) {
+                state.isDirty = true;
+            }
 
             // Death logic - only kill if not in sprout stage and critically dehydrated
             if (needs.water < 5 && state.stage !== "sprout") {
