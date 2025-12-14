@@ -1,8 +1,8 @@
 
 import { System, SystemType, World, EntityID } from "../core/ECS";
-import { PlantState, PlantStage } from "../components/PlantState";
+import { PlantState } from "../components/PlantState";
 import { PlantGenome } from "../components/PlantGenome";
-import { LSystemGenerator } from "../core/LSystemGenerator";
+import { PlantMeshFactory } from "../core/PlantMeshFactory";
 import { DeadPlantState } from "../components/DeadPlantState";
 import { BuildingState } from "../components/BuildingState";
 import { Needs } from "../components/Needs";
@@ -142,7 +142,6 @@ export class RenderSystem extends System {
             const state = entity.getComponent(PlantState);
             const transform = entity.getComponent(TransformComponent);
             const needs = entity.getComponent(Needs);
-            // Genome might be added by GrowthSystem, check existence
             const genome = entity.getComponent(PlantGenome);
 
             if (!state || !transform) continue;
@@ -150,51 +149,48 @@ export class RenderSystem extends System {
 
             let mesh = this.entityMeshes.get(entity.id);
 
-            // Rebuild if dirty or missing
-            if (state.isDirty || !mesh) {
-                // Dispose old mesh
-                if (mesh) {
-                    mesh.dispose();
-                    if (this.lightingSystem) this.lightingSystem.removeShadowCaster(mesh);
-                }
-
+            // Create mesh if missing (only once per plant)
+            if (!mesh) {
                 if (genome) {
-                    mesh = this.createPlantMesh(entity.id, genome, state, transform);
+                    mesh = this.createPlantMesh(entity.id, genome, transform);
                 } else {
-                    // Fallback if no genome yet
+                    // Fallback cylinder if no genome
                     mesh = BABYLON.MeshBuilder.CreateCylinder(`plant_fallback_${entity.id}`, { height: 0.5, diameter: 0.2 }, this.scene);
-                    mesh.position.set(transform.x, this.gameEngine.getTerrainHeightAt(transform.x, transform.z), transform.z);
+                    const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
+                    mesh.position.set(transform.x, terrainY + 0.25, transform.z);
+                    mesh.metadata = { entityId: entity.id };
                 }
-
                 this.entityMeshes.set(entity.id, mesh);
-                state.isDirty = false;
             }
 
-            // Update scaling for continuous growth smoothing
+            // Scale from 0.1 to maxScale based on growth progress
+            // Minimum 0.1 scale ensures reliable picking
             if (mesh && genome) {
-                // Base scale is 1.0. As progress goes from N to N+1, scale to 1.2
-                const iteration = state.currentIteration;
-                const fraction = state.growthProgress - iteration;
-                // Smooth breathing scale
-                const scaleFactor = 1.0 + (fraction * 0.2);
-                mesh.scaling.setAll(scaleFactor);
+                const maxIterations = 5;
+                const progress = Math.min(1, state.growthProgress / maxIterations);
+                const scale = 0.1 + progress * (genome.maxScale - 0.1);
+                mesh.scaling.setAll(scale);
             }
 
-            // Update appearance
+            // Update appearance (stress effects, color, etc.)
             this.updatePlantAppearance(entity.id, mesh!, state, needs, deltaTime);
             this.updateStatusLabel(entity.id, state, needs, transform);
         }
     }
 
-    private createPlantMesh(entityId: EntityID, genome: PlantGenome, state: PlantState, transform: TransformComponent): BABYLON.Mesh {
-        const mesh = LSystemGenerator.generateMesh(genome, state, this.scene);
+    private createPlantMesh(entityId: EntityID, genome: PlantGenome, transform: TransformComponent): BABYLON.Mesh {
+        const mesh = PlantMeshFactory.createMesh(genome, this.scene);
         mesh.name = `plant_${entityId}`;
 
         const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        // Pivot is already at bottom center in LSystemGenerator (starts at 0,0,0)
         mesh.position = new BABYLON.Vector3(transform.x, terrainY, transform.z);
         mesh.receiveShadows = true;
         mesh.metadata = { entityId };
+
+        // Propagate metadata to all child meshes for picking to work
+        mesh.getChildMeshes().forEach(child => {
+            child.metadata = { entityId };
+        });
 
         if (this.lightingSystem) {
             this.lightingSystem.addShadowCaster(mesh);
@@ -236,8 +232,8 @@ export class RenderSystem extends System {
         if (state.health <= 0) {
             r = 0.4; g = 0.25; b = 0.1;
         } else {
-            // Use Genome color as base
-            const baseColor = (entityId !== undefined && this.world.getEntity(entityId)?.getComponent(PlantGenome)?.color) || new BABYLON.Color3(0.2, 0.6, 0.2);
+            // Use stem color as base (or default green)
+            const baseColor = (entityId !== undefined && this.world.getEntity(entityId)?.getComponent(PlantGenome)?.stemColor) || new BABYLON.Color3(0.2, 0.6, 0.2);
 
             // Desaturate logic
             const gray = (baseColor.r + baseColor.g + baseColor.b) / 3;
@@ -308,7 +304,7 @@ export class RenderSystem extends System {
         }
     }
 
-    private createDeadPlantMesh(entityId: EntityID, state: DeadPlantState, transform: TransformComponent): BABYLON.Mesh {
+    private createDeadPlantMesh(entityId: EntityID, _state: DeadPlantState, transform: TransformComponent): BABYLON.Mesh {
         // Fallback dimensions for dead plants since we don't have L-System data easily accessible for them
         const height = 0.5;
         const diameter = 0.2;
@@ -415,7 +411,6 @@ export class RenderSystem extends System {
         if (!needs) return "happy";
         if (needs.water < 15) return "wilting";
         if (needs.water < 40) return "thirsty";
-        if (state.stageChanged) return "growing";
         return "happy";
     }
 

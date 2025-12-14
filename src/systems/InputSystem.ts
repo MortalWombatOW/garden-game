@@ -515,7 +515,8 @@ export class InputSystem extends System {
     private handleInspectMode(pickResult: BABYLON.PickingInfo): void {
         const mesh = pickResult.pickedMesh;
 
-        if (mesh?.name.startsWith("plant_") && mesh.metadata?.entityId !== undefined) {
+        // Check for entityId metadata (works for parent and child meshes)
+        if (mesh?.metadata?.entityId !== undefined) {
             const entity = this.world.getEntity(mesh.metadata.entityId);
             if (entity) {
                 const state = entity.getComponent(PlantState);

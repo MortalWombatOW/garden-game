@@ -109,7 +109,7 @@ export class GrowthSystem extends System {
             // Skip dead plants (but NOT coma plants - they need water processing for revival)
             if (state.health <= 0 && !state.inComa) continue;
 
-            const previousWater = needs.water;
+            // (previousWater removed - no longer needed)
 
             // Get sunlight intensity using lazy cache update
             let sunIntensity = 1.0;
@@ -138,17 +138,13 @@ export class GrowthSystem extends System {
                 const sunlitGrowth = gameHoursDelta * growthMultiplier;
                 state.sunlitAge += sunlitGrowth;
 
-                // Update L-System growth progress
-                // Rate: Reach maxIterations in MATURITY_TIME hours of full sun
-                if (state.growthProgress < genome.maxIterations) {
-                    const growthRate = genome.maxIterations / this.MATURITY_TIME;
+                // Update growth progress (0 = just planted, 5 = fully grown)
+                // Rate: Reach maturity in MATURITY_TIME hours of full sun
+                const MAX_GROWTH = 5;
+                if (state.growthProgress < MAX_GROWTH) {
+                    const growthRate = MAX_GROWTH / this.MATURITY_TIME;
                     state.growthProgress += sunlitGrowth * growthRate;
-
-                    // Cap at max iterations + slight buffer for robust scaling
-                    state.growthProgress = Math.min(genome.maxIterations + 0.99, state.growthProgress);
-
-                    // Update iteration count (triggers dirty if changed)
-                    state.updateGrowth();
+                    state.growthProgress = Math.min(MAX_GROWTH, state.growthProgress);
                 }
             }
 
@@ -215,7 +211,7 @@ export class GrowthSystem extends System {
             const effectiveWaterWanted = waterWanted * (1 - competitionPenalty);
 
             // Try to absorb water from soil
-            const prevAbsorption = needs.lastAbsorption;
+            // (prevAbsorption removed - no longer needed for dirty checks)
             const absorbed = this.soilSystem.absorbWater(
                 transform.x,
                 transform.z,
@@ -233,20 +229,7 @@ export class GrowthSystem extends System {
             const transpiration = gameHoursDelta * 1.5 * transpirationMultiplier; // Lose 1.5% per game-hour at full sun
             needs.water = Math.max(0, needs.water - transpiration);
 
-            // Check if water crossed stress thresholds (15, 30, 40)
-            const stressThresholds = [15, 30, 40];
-            for (const threshold of stressThresholds) {
-                if ((previousWater >= threshold && needs.water < threshold) ||
-                    (previousWater < threshold && needs.water >= threshold)) {
-                    state.isDirty = true;
-                    break;
-                }
-            }
-
-            // Mark dirty if absorption changed significantly (handles turn on/off and intensity changes)
-            if (Math.abs(needs.lastAbsorption - prevAbsorption) > 0.001) {
-                state.isDirty = true;
-            }
+            // (isDirty checks removed - static mesh scaling doesn't need regeneration triggers)
 
             // Death logic - only kill if not in sprout stage and critically dehydrated
             if (needs.water < 5 && state.stage !== "sprout") {
