@@ -4,6 +4,7 @@ import { Engine } from "../core/Engine";
 import { SpatialHashGrid } from "../core/SpatialHashGrid";
 import { TransformComponent } from "../components/TransformComponent";
 import { PlantState } from "../components/PlantState";
+import { PlantGenome } from "../components/PlantGenome";
 import { BuildingState } from "../components/BuildingState";
 import { Needs } from "../components/Needs";
 import { PlayerState } from "../components/PlayerState";
@@ -161,8 +162,13 @@ export class InputSystem extends System {
         entity.addComponent(new TransformComponent(x, 0.5, z));
 
         const plantState = new PlantState();
-        plantState.stage = "sprout";
+        // plantState.stage is now a getter, implicit start at iteration 0 (sprout)
         entity.addComponent(plantState);
+
+        // Add Genome for L-System growth
+        const genome = new PlantGenome();
+        // Default genome is adequate, or we could customize here based on species
+        entity.addComponent(genome);
 
         const needs = new Needs();
         needs.water = 100;

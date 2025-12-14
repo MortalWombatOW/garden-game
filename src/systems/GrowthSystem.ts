@@ -1,6 +1,7 @@
 
 import { Entity, System, SystemType, World } from "../core/ECS";
 import { PlantState } from "../components/PlantState";
+import { PlantGenome } from "../components/PlantGenome";
 import { Needs } from "../components/Needs";
 import { TransformComponent } from "../components/TransformComponent";
 import { DeadPlantState } from "../components/DeadPlantState";
@@ -38,6 +39,8 @@ export class GrowthSystem extends System {
     // Growth modifiers
     private readonly SHADE_GROWTH_MULTIPLIER = 0.3; // Growth rate in shade (30% of full sun)
     private readonly MIN_LIGHT_FOR_GROWTH = 0.1; // Minimum sunlight to grow at all
+    // Time to reach full maturity (max iterations) in game-hours
+    private readonly MATURITY_TIME = 24.0;
 
     constructor(world: World, timeSystem: TimeSystem, soilSystem: SoilSystem, spatialHash: SpatialHashGrid) {
         super(world, SystemType.FIXED);
@@ -93,6 +96,13 @@ export class GrowthSystem extends System {
             const state = entity.getComponent(PlantState);
             const needs = entity.getComponent(Needs);
             const transform = entity.getComponent(TransformComponent);
+            // Default genome if missing (backward compatibility)
+            let genome = entity.getComponent(PlantGenome);
+            if (!genome) {
+                // If existing plant has no genome, add default
+                genome = new PlantGenome();
+                entity.addComponent(genome);
+            }
 
             if (!state || !needs || !transform) continue;
 
@@ -125,10 +135,21 @@ export class GrowthSystem extends System {
                 state.age += gameHoursDelta;
 
                 // Grow based on sunlight (effective age)
-                state.sunlitAge += gameHoursDelta * growthMultiplier;
+                const sunlitGrowth = gameHoursDelta * growthMultiplier;
+                state.sunlitAge += sunlitGrowth;
 
-                // Update growth stage
-                state.updateStage();
+                // Update L-System growth progress
+                // Rate: Reach maxIterations in MATURITY_TIME hours of full sun
+                if (state.growthProgress < genome.maxIterations) {
+                    const growthRate = genome.maxIterations / this.MATURITY_TIME;
+                    state.growthProgress += sunlitGrowth * growthRate;
+
+                    // Cap at max iterations + slight buffer for robust scaling
+                    state.growthProgress = Math.min(genome.maxIterations + 0.99, state.growthProgress);
+
+                    // Update iteration count (triggers dirty if changed)
+                    state.updateGrowth();
+                }
             }
 
             // --- Water Consumption from Soil with Competition ---
@@ -242,6 +263,7 @@ export class GrowthSystem extends System {
         // Remove living plant components
         entity.removeComponent(PlantState);
         entity.removeComponent(Needs);
+        entity.removeComponent(PlantGenome); // Also remove genome for dead plant? Or keep it? DeadPlantState stores "originalStage" string.
 
         // Add dead plant component
         const deadPlantState = new DeadPlantState(state.stage);

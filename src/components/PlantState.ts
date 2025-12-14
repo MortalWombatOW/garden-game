@@ -3,12 +3,7 @@ import { Component } from "../core/ECS";
 
 export type PlantStage = "seed" | "sprout" | "vegetative" | "flowering";
 
-// Stage thresholds in game-hours
-export const STAGE_THRESHOLDS = {
-    sprout: 0,        // Immediately becomes sprout when planted
-    vegetative: 4,    // After 4 game-hours
-    flowering: 12,    // After 12 game-hours
-};
+// Stage thresholds removed in favor of PlantGenome.maxIterations logic
 
 export class PlantState extends Component {
     public isDirty: boolean = true;
@@ -16,48 +11,54 @@ export class PlantState extends Component {
     public sunlitAge: number = 0;
     public health: number = 100;
     public speciesID: string = "generic_plant";
-    public stage: PlantStage = "sprout";
+
+    // Continuous growth tracking
+    // 0 = Seed, 1 = Iteration 1 complete, 2.5 = Halfway through Iteration 3, etc.
+    public growthProgress: number = 0;
+
+    // Derived integer iteration for L-System steps
+    public currentIteration: number = 0;
 
     // Water competition penalty (0 = no penalty, 1 = full penalty/80% reduction)
     public waterCompetitionPenalty: number = 0;
 
-    // Coma state - plant is critically dehydrated but can be revived
+    // Coma state
     public inComa: boolean = false;
-    public comaTimeRemaining: number = 24; // 24 game-hours to revive (~1 in-game day)
+    public comaTimeRemaining: number = 24;
 
-    // Track if stage changed this tick (for mesh swap)
+    // Changes tracking
     public stageChanged: boolean = false;
-    private previousStage: PlantStage = "sprout";
+    private previousIteration: number = 0;
 
-    // Diegetic feedback - stress level (0-3)
-    // 0 = healthy, 1 = mild (droop), 2 = moderate (droop + desaturate), 3 = critical (+ icon)
+    // Diegetic feedback
     public stressLevel: number = 0;
-
-    // Smooth droop animation state (0 = upright, 1 = fully drooped)
     public currentDroop: number = 0;
     public targetDroop: number = 0;
-
-    // Smooth desaturation state (0 = full color, 1 = fully desaturated)
     public currentDesaturation: number = 0;
     public targetDesaturation: number = 0;
 
     /**
-     * Update stage based on age and return true if stage changed
+     * Backward compatibility getter for system logic relying on "stages".
+     * Mapped roughly to iterations.
      */
-    public updateStage(): void {
-        this.previousStage = this.stage;
+    public get stage(): PlantStage {
+        if (this.growthProgress < 1) return "sprout";
+        if (this.growthProgress < 3) return "vegetative";
+        return "flowering"; // 3+ iterations
+    }
 
-        if (this.sunlitAge >= STAGE_THRESHOLDS.flowering) {
-            this.stage = "flowering";
-        } else if (this.sunlitAge >= STAGE_THRESHOLDS.vegetative) {
-            this.stage = "vegetative";
-        } else {
-            this.stage = "sprout";
-        }
+    /**
+     * Update iteration based on growth progress
+     */
+    public updateGrowth(): void {
+        this.previousIteration = this.currentIteration;
+        this.currentIteration = Math.floor(this.growthProgress);
 
-        this.stageChanged = this.stage !== this.previousStage;
-        if (this.stageChanged) {
+        if (this.currentIteration !== this.previousIteration) {
             this.isDirty = true;
+            this.stageChanged = true;
+        } else {
+            this.stageChanged = false;
         }
     }
 }

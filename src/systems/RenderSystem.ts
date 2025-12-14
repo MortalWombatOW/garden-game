@@ -1,6 +1,8 @@
 
 import { System, SystemType, World, EntityID } from "../core/ECS";
 import { PlantState, PlantStage } from "../components/PlantState";
+import { PlantGenome } from "../components/PlantGenome";
+import { LSystemGenerator } from "../core/LSystemGenerator";
 import { DeadPlantState } from "../components/DeadPlantState";
 import { BuildingState } from "../components/BuildingState";
 import { Needs } from "../components/Needs";
@@ -11,12 +13,7 @@ import { TimeSystem } from "./TimeSystem";
 import { LightingSystem } from "./LightingSystem";
 
 // Mesh configurations per stage
-const STAGE_MESHES: Record<PlantStage, { height: number; diameter: number }> = {
-    seed: { height: 0.2, diameter: 0.3 },
-    sprout: { height: 0.5, diameter: 0.3 },
-    vegetative: { height: 1.0, diameter: 0.5 },
-    flowering: { height: 1.5, diameter: 0.7 },
-};
+// STAGE_MESHES removed in favor of L-System generation
 
 type PlantStatus = "happy" | "thirsty" | "wilting" | "coma" | "dead" | "growing";
 
@@ -27,8 +24,6 @@ export class RenderSystem extends System {
 
     // Standard meshes for all entities (plants, buildings, dead plants)
     private entityMeshes: Map<EntityID, BABYLON.Mesh> = new Map();
-    // Track current stage for plants to detect changes
-    private entityStages: Map<EntityID, PlantStage> = new Map();
 
     private statusLabelsContainer: HTMLElement | null;
     private statusLabels: Map<EntityID, HTMLElement> = new Map();
@@ -147,47 +142,58 @@ export class RenderSystem extends System {
             const state = entity.getComponent(PlantState);
             const transform = entity.getComponent(TransformComponent);
             const needs = entity.getComponent(Needs);
+            // Genome might be added by GrowthSystem, check existence
+            const genome = entity.getComponent(PlantGenome);
 
             if (!state || !transform) continue;
             activeIds.add(entity.id);
 
             let mesh = this.entityMeshes.get(entity.id);
-            const currentStage = this.entityStages.get(entity.id);
 
-            // Create or recreate mesh if needed
-            if (!mesh || currentStage !== state.stage) {
-                // Dispose old mesh if exists
+            // Rebuild if dirty or missing
+            if (state.isDirty || !mesh) {
+                // Dispose old mesh
                 if (mesh) {
                     mesh.dispose();
+                    if (this.lightingSystem) this.lightingSystem.removeShadowCaster(mesh);
                 }
-                mesh = this.createPlantMesh(entity.id, state.stage, transform);
+
+                if (genome) {
+                    mesh = this.createPlantMesh(entity.id, genome, state, transform);
+                } else {
+                    // Fallback if no genome yet
+                    mesh = BABYLON.MeshBuilder.CreateCylinder(`plant_fallback_${entity.id}`, { height: 0.5, diameter: 0.2 }, this.scene);
+                    mesh.position.set(transform.x, this.gameEngine.getTerrainHeightAt(transform.x, transform.z), transform.z);
+                }
+
                 this.entityMeshes.set(entity.id, mesh);
-                this.entityStages.set(entity.id, state.stage);
+                state.isDirty = false;
+            }
+
+            // Update scaling for continuous growth smoothing
+            if (mesh && genome) {
+                // Base scale is 1.0. As progress goes from N to N+1, scale to 1.2
+                const iteration = state.currentIteration;
+                const fraction = state.growthProgress - iteration;
+                // Smooth breathing scale
+                const scaleFactor = 1.0 + (fraction * 0.2);
+                mesh.scaling.setAll(scaleFactor);
             }
 
             // Update appearance
-            this.updatePlantAppearance(entity.id, mesh, state, needs, deltaTime);
+            this.updatePlantAppearance(entity.id, mesh!, state, needs, deltaTime);
             this.updateStatusLabel(entity.id, state, needs, transform);
         }
     }
 
-    private createPlantMesh(entityId: EntityID, stage: PlantStage, transform: TransformComponent): BABYLON.Mesh {
-        const config = STAGE_MESHES[stage];
-
-        const mesh = BABYLON.MeshBuilder.CreateCylinder(`plant_${entityId}`, {
-            height: config.height,
-            diameter: config.diameter,
-            tessellation: 8,
-        }, this.scene);
+    private createPlantMesh(entityId: EntityID, genome: PlantGenome, state: PlantState, transform: TransformComponent): BABYLON.Mesh {
+        const mesh = LSystemGenerator.generateMesh(genome, state, this.scene);
+        mesh.name = `plant_${entityId}`;
 
         const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        mesh.position = new BABYLON.Vector3(transform.x, terrainY + config.height / 2, transform.z);
+        // Pivot is already at bottom center in LSystemGenerator (starts at 0,0,0)
+        mesh.position = new BABYLON.Vector3(transform.x, terrainY, transform.z);
         mesh.receiveShadows = true;
-
-        const mat = new BABYLON.StandardMaterial(`plantMat_${entityId}`, this.scene);
-        mat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2); // Default green
-        mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
-        mesh.material = mat;
         mesh.metadata = { entityId };
 
         if (this.lightingSystem) {
@@ -210,38 +216,36 @@ export class RenderSystem extends System {
         const LERP_SPEED = 2.0;
         const lerpFactor = Math.min(1, LERP_SPEED * deltaTime);
 
-        state.targetDroop = state.stressLevel >= 1 ? Math.min(1, state.stressLevel * 0.4) : 0;
+        // Compute target desaturation logic (keep from original)
         state.targetDesaturation = state.stressLevel >= 2 ? Math.min(1, (state.stressLevel - 1) * 0.5) : 0;
-
-        state.currentDroop += (state.targetDroop - state.currentDroop) * lerpFactor;
         state.currentDesaturation += (state.targetDesaturation - state.currentDesaturation) * lerpFactor;
 
-        // 2. Update rotation for droop effect
-        const randomSeed = entityId * 12345;
-        const leanDirX = Math.sin(randomSeed);
-        const leanDirZ = Math.cos(randomSeed);
-        const leanAngle = state.currentDroop * (Math.PI / 4);
-
-        mesh.rotation.x = leanAngle * leanDirX;
-        mesh.rotation.z = leanAngle * leanDirZ;
+        // Note: L-System geometry handles structural droop via stressLevel.
+        // We do NOT apply rotation.x/z leaning here to avoid double transforms,
+        // unless we want a subtle wind sway or extra lean.
+        // Let's keep it static for now to trust the L-System.
+        mesh.rotation.x = 0;
+        mesh.rotation.z = 0;
 
         // 3. Update Color
         const mat = mesh.material as BABYLON.StandardMaterial;
+        if (!mat) return;
+
         let r = 0, g = 0, b = 0;
 
         if (state.health <= 0) {
             r = 0.4; g = 0.25; b = 0.1;
         } else {
-            const greenIntensity = state.stage === "flowering" ? 0.4 :
-                state.stage === "vegetative" ? 0.55 : 0.6;
-            const baseR = 0.2, baseG = greenIntensity, baseB = 0.2;
+            // Use Genome color as base
+            const baseColor = (entityId !== undefined && this.world.getEntity(entityId)?.getComponent(PlantGenome)?.color) || new BABYLON.Color3(0.2, 0.6, 0.2);
 
-            const gray = (baseR + baseG + baseB) / 3;
+            // Desaturate logic
+            const gray = (baseColor.r + baseColor.g + baseColor.b) / 3;
             const desat = state.currentDesaturation;
 
-            r = baseR + (gray - baseR) * desat;
-            g = baseG + (gray - baseG) * desat;
-            b = baseB + (gray - baseB) * desat;
+            r = baseColor.r + (gray - baseColor.r) * desat;
+            g = baseColor.g + (gray - baseColor.g) * desat;
+            b = baseColor.b + (gray - baseColor.b) * desat;
         }
 
         // Overlay Glow
@@ -305,16 +309,18 @@ export class RenderSystem extends System {
     }
 
     private createDeadPlantMesh(entityId: EntityID, state: DeadPlantState, transform: TransformComponent): BABYLON.Mesh {
-        const stageConfig = STAGE_MESHES[state.originalStage as PlantStage] || STAGE_MESHES.sprout;
+        // Fallback dimensions for dead plants since we don't have L-System data easily accessible for them
+        const height = 0.5;
+        const diameter = 0.2;
 
         const mesh = BABYLON.MeshBuilder.CreateCylinder(`deadplant_${entityId}`, {
-            height: stageConfig.height,
-            diameter: stageConfig.diameter,
+            height: height,
+            diameter: diameter,
             tessellation: 8,
         }, this.scene);
 
         const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        mesh.position = new BABYLON.Vector3(transform.x, terrainY + stageConfig.height / 2, transform.z);
+        mesh.position = new BABYLON.Vector3(transform.x, terrainY + height / 2, transform.z);
         mesh.receiveShadows = true;
 
         const mat = new BABYLON.StandardMaterial(`deadPlantMat_${entityId}`, this.scene);
@@ -393,7 +399,6 @@ export class RenderSystem extends System {
             if (!activeIds.has(id)) {
                 mesh.dispose();
                 this.entityMeshes.delete(id);
-                this.entityStages.delete(id);
 
                 const label = this.statusLabels.get(id);
                 if (label) {
@@ -441,9 +446,11 @@ export class RenderSystem extends System {
         label.textContent = this.getStatusText(status);
         label.className = `status-label ${status}`;
 
-        const config = STAGE_MESHES[state.stage];
+        // Approximate height based on growth or fixed offset
+        // L-System plants can vary, but we can assume ~2 units max height for label
+        const heightOffset = 1.0 + (state.growthProgress * 0.2);
         const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        const worldPos = new BABYLON.Vector3(transform.x, terrainY + config.height + 0.3, transform.z);
+        const worldPos = new BABYLON.Vector3(transform.x, terrainY + heightOffset + 0.3, transform.z);
 
         const screenPos = BABYLON.Vector3.Project(
             worldPos,

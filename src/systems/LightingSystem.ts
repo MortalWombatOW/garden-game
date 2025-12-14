@@ -255,6 +255,13 @@ export class LightingSystem extends System {
     }
 
     /**
+     * Remove a mesh from casting shadows
+     */
+    public removeShadowCaster(mesh: BABYLON.AbstractMesh): void {
+        this.shadowGenerator.removeShadowCaster(mesh);
+    }
+
+    /**
      * Check if a world position is in direct sunlight using raycasting.
      * Returns a value between 0 (full shadow) and 1 (full sun).
      */
