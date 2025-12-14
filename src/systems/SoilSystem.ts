@@ -94,17 +94,19 @@ export class SoilSystem extends System {
             this.scene,
             false,
             false,
-            BABYLON.Texture.NEAREST_SAMPLINGMODE,
+            BABYLON.Texture.BILINEAR_SAMPLINGMODE,
             BABYLON.Constants.TEXTURETYPE_FLOAT
         );
         this.stateTexture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
         this.stateTexture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
 
         // Visualization texture (GPU shader converts state to colors)
+        // High resolution for detailed noise
+        const visSize = 1024;
         this.visTexture = new BABYLON.CustomProceduralTexture(
             "soilVis",
             "soilVisualization",
-            size,
+            visSize,
             this.scene
         );
         this.visTexture.refreshRate = 1; // Render every frame
@@ -316,8 +318,8 @@ export class SoilSystem extends System {
         for (let i = 0; i < this.moistureData.length; i++) {
             const x = i % size;
             const z = Math.floor(i / size);
-            // Flip Y for texture coordinates
-            const imgY = size - 1 - z;
+            // Don't flip Y for raw texture
+            const imgY = z;
             const texIndex = (imgY * size + x) * 4;
 
             this.stateTextureData[texIndex] = this.moistureData[i];     // R = Moisture

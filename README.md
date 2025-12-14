@@ -163,3 +163,4 @@ npm run dev
   - [] plant detail view with genetics and needs
   - [] create proceduraltextures for soil and plants
   - [] weather events respect time scale
+  - [] fly through the world like a bird
