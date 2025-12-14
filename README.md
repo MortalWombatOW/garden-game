@@ -161,3 +161,5 @@ npm run dev
   - [] procedural generation of wildlife
   - [] planters
   - [] plant detail view with genetics and needs
+  - [] create proceduraltextures for soil and plants
+  - [] weather events respect time scale
