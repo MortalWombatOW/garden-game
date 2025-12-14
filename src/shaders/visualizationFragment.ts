@@ -85,7 +85,7 @@ void main() {
         // Effect B: Darkening
         // Wet soil uses physically based darkening (porous darkening).
         // Simple approximation: darker albedo when wet.
-        vec3 finalColor = grainyColor * mix(1.0, 0.4, wetness);
+        vec3 finalColor = grainyColor * mix(1.0, 0.6, wetness);
 
         gl_FragColor = vec4(finalColor, 1.0);
     }

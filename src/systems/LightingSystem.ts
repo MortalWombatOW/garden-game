@@ -90,7 +90,7 @@ export class LightingSystem extends System {
             new BABYLON.Vector3(0, 1, 0),
             this.scene
         );
-        this.ambientLight.intensity = 0.3;
+        this.ambientLight.intensity = 0.5;
         this.ambientLight.groundColor = new BABYLON.Color3(0.1, 0.1, 0.15);
 
         // Set initial position
@@ -157,6 +157,7 @@ export class LightingSystem extends System {
 
         let skyColor: BABYLON.Color3;
         let groundColor: BABYLON.Color3;
+        let ambientColor: BABYLON.Color3;
 
         if (timeOfDay < 0.25) {
             // Night to dawn (0:00 - 6:00)
@@ -169,6 +170,11 @@ export class LightingSystem extends System {
             groundColor = BABYLON.Color3.Lerp(
                 new BABYLON.Color3(0.01, 0.01, 0.03),
                 new BABYLON.Color3(0.2, 0.15, 0.1),
+                t
+            );
+            ambientColor = BABYLON.Color3.Lerp(
+                new BABYLON.Color3(0.25, 0.25, 0.45), // Bright Night Blue
+                new BABYLON.Color3(0.4, 0.3, 0.4), // Dawn
                 t
             );
         } else if (timeOfDay < 0.5) {
@@ -184,6 +190,11 @@ export class LightingSystem extends System {
                 new BABYLON.Color3(0.3, 0.35, 0.4),
                 t
             );
+            ambientColor = BABYLON.Color3.Lerp(
+                new BABYLON.Color3(0.4, 0.3, 0.4), // Dawn
+                new BABYLON.Color3(0.7, 0.7, 0.7), // Noon White
+                t
+            );
         } else if (timeOfDay < 0.75) {
             // Noon to dusk (12:00 - 18:00)
             const t = (timeOfDay - 0.5) / 0.25;
@@ -195,6 +206,11 @@ export class LightingSystem extends System {
             groundColor = BABYLON.Color3.Lerp(
                 new BABYLON.Color3(0.3, 0.35, 0.4),
                 new BABYLON.Color3(0.3, 0.15, 0.1),
+                t
+            );
+            ambientColor = BABYLON.Color3.Lerp(
+                new BABYLON.Color3(0.7, 0.7, 0.7), // Noon White
+                new BABYLON.Color3(0.6, 0.5, 0.5), // Dusk
                 t
             );
         } else {
@@ -210,12 +226,18 @@ export class LightingSystem extends System {
                 new BABYLON.Color3(0.01, 0.01, 0.03),
                 t
             );
+            ambientColor = BABYLON.Color3.Lerp(
+                new BABYLON.Color3(0.6, 0.5, 0.5), // Dusk
+                new BABYLON.Color3(0.25, 0.25, 0.45), // Bright Night Blue
+                t
+            );
         }
 
         // Update scene clear color (sky background)
         this.scene.clearColor = new BABYLON.Color4(skyColor.r, skyColor.g, skyColor.b, 1);
         this.skyboxMaterial.emissiveColor = skyColor;
         this.ambientLight.groundColor = groundColor;
+        this.ambientLight.diffuse = ambientColor!;
     }
 
     /**
