@@ -72,14 +72,14 @@ export class RenderSystem extends System {
 
         // Emitter shape - large box above the ground
         this.rainSystem.emitter = new BABYLON.Vector3(0, 20, 0);
-        this.rainSystem.minEmitBox = new BABYLON.Vector3(-40, 0, -40);
+        this.rainSystem.minEmitBox = new BABYLON.Vector3(-40, 0, -20);
         this.rainSystem.maxEmitBox = new BABYLON.Vector3(40, 0, 40);
 
         // Life time and size
         this.rainSystem.minLifeTime = 0.5;
         this.rainSystem.maxLifeTime = 1.0;
-        this.rainSystem.minSize = 0.1;
-        this.rainSystem.maxSize = 0.3;
+        this.rainSystem.minSize = 0.05;
+        this.rainSystem.maxSize = 0.15;
         this.rainSystem.minScaleY = 3.0;
         this.rainSystem.maxScaleY = 5.0;
 
@@ -94,8 +94,8 @@ export class RenderSystem extends System {
         this.rainSystem.updateSpeed = 0.01;
 
         // Color
-        this.rainSystem.color1 = new BABYLON.Color4(0.8, 0.8, 1.0, 0.5);
-        this.rainSystem.color2 = new BABYLON.Color4(0.8, 0.8, 1.0, 0.5);
+        this.rainSystem.color1 = new BABYLON.Color4(0.8, 0.8, 1.0, 0.2);
+        this.rainSystem.color2 = new BABYLON.Color4(0.8, 0.8, 1.0, 0.2);
         this.rainSystem.colorDead = new BABYLON.Color4(0.5, 0.5, 0.6, 0.0);
 
         // Start
@@ -121,7 +121,7 @@ export class RenderSystem extends System {
         // 2. Update Rain
         if (this.rainSystem && this.timeSystem) {
             const intensity = this.timeSystem.rainIntensity;
-            this.rainSystem.emitRate = intensity * 5000;
+            this.rainSystem.emitRate = intensity * 1500;
         }
 
         // Track active entity IDs for cleanup

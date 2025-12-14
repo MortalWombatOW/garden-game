@@ -155,6 +155,7 @@ npm run dev
   - [] procedural generation of plants using L-systems and simplified genetics
   - [] add custom ground types: ponds (always 100% moisture), stone paths (always 0% moisture)
   - [x] rain events
+  - [] add weather temperature
   - [] weather events (wind, snow, hail, etc.)
   - [x] 3d terrain generation
   - [] procedural generation of soil
