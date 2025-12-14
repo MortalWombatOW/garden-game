@@ -12,8 +12,8 @@ export class Engine {
     private perlinNoise: PerlinNoise;
 
     // Terrain configuration
-    private readonly TERRAIN_HEIGHT = 3;     // Maximum terrain height
-    private readonly TERRAIN_SCALE = 0.08;   // Noise frequency (lower = smoother hills)
+    private readonly TERRAIN_HEIGHT = 10;     // Maximum terrain height
+    private readonly TERRAIN_SCALE = 0.02;   // Noise frequency (lower = smoother hills)
     private readonly TERRAIN_OCTAVES = 4;    // Detail levels
     private readonly TERRAIN_SEED = 42;      // Random seed for reproducibility
 
