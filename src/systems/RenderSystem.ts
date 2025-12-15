@@ -203,6 +203,19 @@ export class RenderSystem extends System {
         mesh.receiveShadows = true;
         mesh.metadata = { entityId };
 
+        // Create an invisible hitbox cylinder for easier picking
+        // The hitbox is larger than the visual plant geometry
+        const hitbox = BABYLON.MeshBuilder.CreateCylinder(`hitbox_${entityId}`, {
+            height: 2.0,   // Tall enough for grown plants
+            diameter: 0.6, // Wide enough to click easily
+            tessellation: 8
+        }, this.scene);
+        hitbox.position.y = 1.0; // Center vertically
+        hitbox.parent = mesh;
+        hitbox.isVisible = false; // Invisible
+        hitbox.isPickable = true;
+        hitbox.metadata = { entityId }; // Same entityId for picking
+
         // Propagate metadata to all child meshes for picking to work
         mesh.getChildMeshes().forEach(child => {
             child.metadata = { entityId };

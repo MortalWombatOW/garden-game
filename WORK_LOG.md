@@ -41,3 +41,24 @@ Fix the inspect tool and migrate remaining UI elements to 3D diegetic UI.
 - `StackPanel3D.isVisible` doesn't fully hide child mesh buttons - must control individual mesh visibility with `.setEnabled()`
 - GUI3DManager requires meshes to be pickable to detect clicks, but scene raycasting can be filtered via predicate
 - 3D tooltips work well with billboard mode for always-facing-camera text
+
+## 2025-12-14: Fix Plant Inspection Tool
+
+### Task
+Fix the Inspect tool which was failing to detect plants and display information.
+
+### What Was Done
+1. **Fixed Picking**: Plants were difficult to click due to thin geometry. Added invisible hitbox cylinders to all plants in `RenderSystem` that are larger than the visual mesh, making them much easier to target.
+2. **Fixed Filtering**: Updated `InputSystem` picking predicate to include meshes with `metadata.entityId`, ensuring the new hitboxes (and child meshes) are valid targets.
+3. **Fixed Tooltip Visibility**: The 3D inspect tooltip was invisible due to back-face culling/orientation issues.
+   - Enabled `sideOrientation: DOUBLESIDE` on the tooltip plane.
+   - Set `renderingGroupId = 1` to ensure the tooltip always renders on top of world geometry.
+
+### Files Modified
+- `src/systems/InputSystem.ts`: Picking logic update.
+- `src/systems/RenderSystem.ts`: Added plant hitboxes.
+- `src/systems/DiegeticUISystem.ts`: Tooltip rendering fixes.
+
+### Lessons Learned
+- When using `BILLBOARDMODE_ALL` on a plane, orientation matters. `DOUBLESIDE` is safer to ensure visibility.
+- For 3D UI elements that must not clip into the world, using `renderingGroupId` is a robust solution to force draw order.

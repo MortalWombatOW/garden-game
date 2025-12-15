@@ -188,10 +188,12 @@ export class DiegeticUISystem extends System {
         // === INSPECT TOOLTIP ===
         this.tooltipPlane = BABYLON.MeshBuilder.CreatePlane("inspect_tooltip", {
             width: 5.6,   // 0.8 * 7
-            height: 3.5   // 0.5 * 7
+            height: 3.5,  // 0.5 * 7
+            sideOrientation: BABYLON.Mesh.DOUBLESIDE // Ensure visible from both sides
         }, this.scene);
         this.tooltipPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
         this.tooltipPlane.isPickable = false;
+        this.tooltipPlane.renderingGroupId = 1; // Render on top of world (default 0)
         this.tooltipPlane.setEnabled(false); // Hidden by default
 
         this.tooltipADT = GUI.AdvancedDynamicTexture.CreateForMesh(this.tooltipPlane, 400, 250);

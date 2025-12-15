@@ -251,10 +251,15 @@ export class InputSystem extends System {
         const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (mesh) => {
             // Exclude 3D UI elements from picking
             if (mesh.name.startsWith("mesh_") || mesh.name.startsWith("btn3d_") ||
-                mesh.name === "status_plane" || mesh.name.startsWith("label_")) {
+                mesh.name === "status_plane" || mesh.name.startsWith("label_") ||
+                mesh.name.startsWith("inspect_")) {
                 return false;
             }
-            return mesh.name === "ground" || mesh.name.startsWith("plant_") || mesh.name.startsWith("building_");
+            // Allow ground, plants, buildings by name, or any mesh with entityId metadata (for plant picking)
+            return mesh.name === "ground" ||
+                mesh.name.startsWith("plant_") ||
+                mesh.name.startsWith("building_") ||
+                mesh.metadata?.entityId !== undefined;
         });
 
         if (!pickResult?.hit || !pickResult.pickedPoint) {
