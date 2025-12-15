@@ -1,5 +1,29 @@
 # Work Log
 
+## 2025-12-14: Implement Nitrogen Absorption and Inspect UI
+
+### Task
+Add water and nitrogen intake measures to the plant inspect overlay.
+
+### What Was Done
+1.  **Implemented Nitrogen Absorption Logic**:
+    -   Updated `SoilSystem` with `absorbNitrogen()` method, mirroring the diffusion-based water absorption logic.
+    -   Updated `GrowthSystem` to make plants consume nitrogen over time and absorb it from the soil.
+    -   Added `lastNitrogenAbsorption` to `Needs` component to track intake rates.
+
+2.  **Updated Inspect Tool**:
+    -   Modified `InputSystem` to display "Water In" and "Nitro In" rates in the 3D inspect tooltip.
+    -   This gives players immediate feedback on whether their plants are getting enough resources.
+
+### Files Modified
+-   `src/systems/SoilSystem.ts`: Added `absorbNitrogen`.
+-   `src/systems/GrowthSystem.ts`: Added nitrogen consumption and absorption calls.
+-   `src/components/Needs.ts`: Added `lastNitrogenAbsorption` field.
+-   `src/systems/InputSystem.ts`: Added lines to the inspect tooltip.
+
+### Lessons Learned
+-   Reusing the `absorbWater` pattern for nitrogen made implementation quick and consistent.
+-   Visualizing invisible simulation data (like absorption rates) significantly improves the feeling of a living ecosystem.
 ## 2025-12-14: Complete 3D Diegetic UI Migration
 
 ### Task

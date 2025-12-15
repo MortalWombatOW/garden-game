@@ -579,6 +579,18 @@ export class InputSystem extends System {
                         });
                     }
 
+                    // Intake Info
+                    // Needs.lastAbsorption is per-tick (10 ticks/sec).
+                    // Display as "units/sec" or just raw x100 for readability?
+                    // Let's show as "Units/hr" (game hour) or just raw "Rate".
+                    // The values are usually small (e.g. 0.05). Let's multiply by 60 (approx per sec? no, 10 ticks/sec = x10).
+                    // Actually, let's just show loose relative numbers (x100).
+                    const waterIn = (needs.lastAbsorption * 10).toFixed(2);
+                    const nitroIn = (needs.lastNitrogenAbsorption * 10).toFixed(2);
+
+                    rows.push({ label: "Water In:", value: `+${waterIn}/s`, color: "#66aaff" });
+                    rows.push({ label: "Nitro In:", value: `+${nitroIn}/s`, color: "#aaffaa" });
+
                     // Show 3D tooltip
                     if (this.diegeticUI) {
                         const worldPos = new BABYLON.Vector3(transform.x, 0, transform.z);

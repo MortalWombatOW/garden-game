@@ -276,6 +276,47 @@ export class SoilSystem extends System {
         return absorbed;
     }
 
+    public absorbNitrogen(worldX: number, worldZ: number, radius: number, maxAmount: number): number {
+        const { cellX: centerX, cellZ: centerZ } = this.getCellCoords(worldX, worldZ);
+        const cellRadius = Math.ceil(radius / this.CELL_SIZE);
+
+        let totalAvailable = 0;
+        const cellsInRange: { index: number; nitrogen: number }[] = [];
+
+        for (let dx = -cellRadius; dx <= cellRadius; dx++) {
+            for (let dz = -cellRadius; dz <= cellRadius; dz++) {
+                const cx = centerX + dx;
+                const cz = centerZ + dz;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist > cellRadius) continue;
+
+                const index = this.getIndex(cx, cz);
+                if (index === -1) continue;
+
+                const nitrogen = this.nitrogenData[index];
+                if (nitrogen > 0) {
+                    cellsInRange.push({ index, nitrogen });
+                    totalAvailable += nitrogen;
+                }
+            }
+        }
+
+        if (totalAvailable === 0 || cellsInRange.length === 0) return 0;
+
+        const toAbsorb = Math.min(maxAmount, totalAvailable * 0.5);
+        let absorbed = 0;
+
+        for (const cell of cellsInRange) {
+            const share = (cell.nitrogen / totalAvailable) * toAbsorb;
+            const newNitrogen = Math.max(0, cell.nitrogen - share);
+            this.nitrogenData[cell.index] = newNitrogen;
+            absorbed += share;
+        }
+
+        this.textureDirty = true;
+        return absorbed;
+    }
+
     public showHighlight(x: number, z: number, visible: boolean): void {
         if (!visible) {
             this.highlightMesh.isVisible = false;

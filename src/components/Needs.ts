@@ -8,6 +8,7 @@ export class Needs extends Component {
 
     // Last tick's water absorption amount (for visualization)
     public lastAbsorption: number = 0;
+    public lastNitrogenAbsorption: number = 0;
 
     // Thresholds could be implicitly defined by the species ID in PlantState, 
     // but storing current status here is good.

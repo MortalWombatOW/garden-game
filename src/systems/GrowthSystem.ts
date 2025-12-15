@@ -207,6 +207,10 @@ export class GrowthSystem extends System {
             const waterNeedPerHour = state.stage === "flowering" ? 5 : state.stage === "vegetative" ? 3 : 1;
             const waterWanted = waterNeedPerHour * gameHoursDelta;
 
+            // Nitrogen needs
+            const nitrogenNeedPerHour = state.stage === "flowering" ? 2.5 : state.stage === "vegetative" ? 1.5 : 0.5;
+            const nitrogenWanted = nitrogenNeedPerHour * gameHoursDelta;
+
             // Apply competition penalty to water absorption
             const effectiveWaterWanted = waterWanted * (1 - competitionPenalty);
 
@@ -223,11 +227,27 @@ export class GrowthSystem extends System {
             needs.water = Math.min(100, needs.water + absorbed);
             needs.lastAbsorption = absorbed; // Store for visualization
 
+            // Apply competition to nitrogen too?
+            const effectiveNitrogenWanted = nitrogenWanted * (1 - competitionPenalty);
+            const realAbsorbedNitrogen = this.soilSystem.absorbNitrogen(
+                transform.x,
+                transform.z,
+                rootRadius,
+                effectiveNitrogenWanted
+            );
+
+            needs.nitrogen = Math.min(100, needs.nitrogen + realAbsorbedNitrogen);
+            needs.lastNitrogenAbsorption = realAbsorbedNitrogen;
+
 
             // Natural water usage/transpiration (modified by sunlight - less transpiration in shade)
             const transpirationMultiplier = this.SHADE_GROWTH_MULTIPLIER + (1 - this.SHADE_GROWTH_MULTIPLIER) * sunIntensity;
             const transpiration = gameHoursDelta * 1.5 * transpirationMultiplier; // Lose 1.5% per game-hour at full sun
             needs.water = Math.max(0, needs.water - transpiration);
+
+            // Nitrogen metabolism (slower than water)
+            const nitrogenMetabolism = gameHoursDelta * 0.5 * transpirationMultiplier;
+            needs.nitrogen = Math.max(0, needs.nitrogen - nitrogenMetabolism);
 
             // (isDirty checks removed - static mesh scaling doesn't need regeneration triggers)
 
