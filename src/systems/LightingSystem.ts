@@ -1,5 +1,6 @@
 
 import * as BABYLON from "@babylonjs/core";
+import { SkyMaterial } from "@babylonjs/materials";
 import { System, SystemType, World } from "../core/ECS";
 import { Engine } from "../core/Engine";
 import { TimeSystem } from "./TimeSystem";
@@ -14,16 +15,20 @@ export class LightingSystem extends System {
 
     // Sun components
     private sunLight: BABYLON.DirectionalLight;
-    private sunMesh: BABYLON.Mesh;
     private shadowGenerator: BABYLON.ShadowGenerator;
 
     // Moon components
     private moonLight: BABYLON.DirectionalLight;
-    private moonMesh: BABYLON.Mesh;
+
+    // Stars
+    private stars: BABYLON.PointsCloudSystem;
+    private starMesh: BABYLON.Mesh | null = null;
+    private readonly STAR_COUNT = 2000;
+    private readonly STAR_RADIUS = 400;
 
     // Skybox
     private skybox: BABYLON.Mesh;
-    private skyboxMaterial: BABYLON.StandardMaterial;
+    private skyMaterial: SkyMaterial;
 
     // Ambient light
     private ambientLight: BABYLON.HemisphericLight;
@@ -57,32 +62,54 @@ export class LightingSystem extends System {
         this.moonLight.diffuse = new BABYLON.Color3(0.8, 0.9, 1.0); // Cool white
         this.moonLight.specular = new BABYLON.Color3(0.8, 0.9, 1.0);
 
-        // Create sun mesh (visual representation)
-        this.sunMesh = BABYLON.MeshBuilder.CreateSphere("sunMesh", { diameter: 8 }, this.scene);
-        const sunMaterial = new BABYLON.StandardMaterial("sunMat", this.scene);
-        sunMaterial.emissiveColor = new BABYLON.Color3(1, 0.9, 0.5);
-        sunMaterial.disableLighting = true;
-        this.sunMesh.material = sunMaterial;
-
-        // Create moon mesh
-        this.moonMesh = BABYLON.MeshBuilder.CreateSphere("moonMesh", { diameter: 6 }, this.scene);
-        const moonMaterial = new BABYLON.StandardMaterial("moonMat", this.scene);
-        moonMaterial.emissiveColor = new BABYLON.Color3(0.9, 0.95, 1);
-        moonMaterial.disableLighting = true;
-        this.moonMesh.material = moonMaterial;
-
         // Enable shadows (Sun only for now to save performance)
         this.shadowGenerator = new BABYLON.ShadowGenerator(1024, this.sunLight);
         this.shadowGenerator.useBlurExponentialShadowMap = true;
         this.shadowGenerator.blurKernel = 32;
 
-        // Create skybox
-        this.skybox = BABYLON.MeshBuilder.CreateBox("skyBox", { size: 500 }, this.scene);
-        this.skyboxMaterial = new BABYLON.StandardMaterial("skyBoxMat", this.scene);
-        this.skyboxMaterial.backFaceCulling = false;
-        this.skyboxMaterial.disableLighting = true;
-        this.skybox.material = this.skyboxMaterial;
+        // Create Skybox using SkyMaterial
+        this.skybox = BABYLON.MeshBuilder.CreateBox("skyBox", { size: 1000 }, this.scene);
+        this.skyMaterial = new SkyMaterial("skyMaterial", this.scene);
+        this.skyMaterial.backFaceCulling = false;
+
+        // Sky Config
+        this.skyMaterial.turbidity = 5; // Haze amount
+        this.skyMaterial.luminance = 1; // Brightness
+        this.skyMaterial.inclination = 0; // The sun's path (0 = overhead)
+        this.skyMaterial.azimuth = 0.25; // Direction of sun 
+
+        this.skybox.material = this.skyMaterial;
         this.skybox.infiniteDistance = true;
+
+        // Create Stars
+        this.stars = new BABYLON.PointsCloudSystem("stars", 1, this.scene);
+        this.stars.addPoints(this.STAR_COUNT, (particle: BABYLON.CloudPoint) => {
+            // Random position on sphere surface
+            const theta = 2 * Math.PI * Math.random();
+            const phi = Math.acos(2 * Math.random() - 1);
+
+            particle.position = new BABYLON.Vector3(
+                this.STAR_RADIUS * Math.cos(theta) * Math.sin(phi),
+                this.STAR_RADIUS * Math.sin(theta) * Math.sin(phi),
+                this.STAR_RADIUS * Math.cos(phi)
+            );
+
+            // Random color (mostly white/blueish) - boosted 1.5x
+            const c = (0.8 + Math.random() * 0.2) * 1.5;
+            particle.color = new BABYLON.Color4(c, c, (c + 0.1) * 1.5, 1);
+        });
+
+        this.stars.buildMeshAsync().then((mesh) => {
+            this.starMesh = mesh;
+            if (this.starMesh.material) {
+                // Cast to standard material (or PBR) to access emissive and disableLighting
+                const mat = this.starMesh.material as BABYLON.StandardMaterial;
+                mat.emissiveColor = new BABYLON.Color3(1.5, 1.5, 1.5);
+                mat.disableLighting = true;
+            }
+            this.starMesh.infiniteDistance = true;
+            this.starMesh.renderingGroupId = 0; // Background
+        });
 
         // Add ambient light for when sun is down
         this.ambientLight = new BABYLON.HemisphericLight(
@@ -95,12 +122,15 @@ export class LightingSystem extends System {
 
         // Set initial position
         this.updateCelestialPositions();
-        this.updateSkyColors();
     }
 
     public update(_deltaTime: number): void {
         this.updateCelestialPositions();
-        this.updateSkyColors();
+
+        // Rotate stars slowly
+        if (this.starMesh) {
+            this.starMesh.rotation.y += 0.0001;
+        }
     }
 
     private updateCelestialPositions(): void {
@@ -108,136 +138,76 @@ export class LightingSystem extends System {
 
         // Convert time to angle: 0.5 (noon) = sun at highest point
         // 0.0 or 1.0 (midnight) = sun below horizon
-        const angle = (timeOfDay - 0.25) * 2 * Math.PI; // Shift so sunrise is at 0.25 (6am)
+        // Shift so sunrise (0.25) is at 0
+        const angle = (timeOfDay - 0.25) * 2 * Math.PI;
 
-        // Calculate sun position on a circular orbit
+        // Calculate sun position (X-Y plane for now, standard orbit)
         const x = Math.cos(angle) * this.SUN_DISTANCE;
         const y = Math.sin(angle) * this.SUN_DISTANCE + this.SUN_HEIGHT_OFFSET;
-        const z = 0; // Sun moves in the X-Y plane
+        const z = 0;
 
-        this.sunMesh.position.set(x, y, z);
+        const sunPosition = new BABYLON.Vector3(x, y, z);
 
-        // Sun logic
-        this.sunLight.direction = this.sunMesh.position.negate().normalize();
+        // Update SkyMaterial Sun Position
+        this.skyMaterial.useSunPosition = true;
+        this.skyMaterial.sunPosition = sunPosition;
 
-        const sunHeight = Math.max(0, y);
-        const sunHeightRatio = Math.min(1, sunHeight / this.SUN_DISTANCE);
-        this.sunLight.intensity = sunHeightRatio * 0.8 + 0.1; // Range 0.1 to 0.9
+        // Determine Sun/Moon State
+        const isDay = y > 0;
 
-        // Adjust sun color based on height (warmer at horizon)
+        // --- Sun Logic ---
+        this.sunLight.direction = sunPosition.negate().normalize();
+
+        const sunHeightRatio = Math.max(0, Math.min(1, y / this.SUN_DISTANCE));
+
+        // Intensity fades out as sun sets
+        this.sunLight.intensity = sunHeightRatio * 1.5; // Brighter sun
+        this.sunLight.setEnabled(isDay || sunHeightRatio > 0.1);
+
+        // Adjust Sun Color (warm at horizon)
         if (sunHeightRatio < 0.3) {
             const t = sunHeightRatio / 0.3;
             this.sunLight.diffuse = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(1, 0.5, 0.2), // Orange at horizon
-                new BABYLON.Color3(1, 0.95, 0.8), // Yellow-white at noon
+                new BABYLON.Color3(1, 0.4, 0.1), // Orange/Red
+                new BABYLON.Color3(1, 0.95, 0.8), // Yellow-white
                 t
             );
         }
 
-        // Moon logic (Opposite to sun)
-        // We can just negate the sun position relative to center, but we want to maintain the offset logic if needed.
-        // Simplest is to just use angle + PI
+        // --- Star Logic ---
+        if (this.starMesh) {
+            // Fade stars in when sun is below horizon (y < 0)
+            // Full visibility at midnight (y lowest)
+            // Start fading in at y < 10 (dusk)
+
+            const starVisibility = 1.0 - Math.min(1, Math.max(0, (y + 10) / 30));
+            this.starMesh.visibility = starVisibility;
+        }
+
+        // --- Moon Logic ---
+        // Moon is opposite to sun
         const moonAngle = angle + Math.PI;
         const moonX = Math.cos(moonAngle) * this.SUN_DISTANCE;
         const moonY = Math.sin(moonAngle) * this.SUN_DISTANCE + this.SUN_HEIGHT_OFFSET;
 
-        this.moonMesh.position.set(moonX, moonY, z);
-        this.moonLight.direction = this.moonMesh.position.negate().normalize();
+        const moonPosition = new BABYLON.Vector3(moonX, moonY, z);
+        this.moonLight.direction = moonPosition.negate().normalize();
 
-        const moonHeight = Math.max(0, moonY);
-        const moonHeightRatio = Math.min(1, moonHeight / this.SUN_DISTANCE);
+        // Moon only active at night
+        this.moonLight.setEnabled(!isDay);
 
-        // Moon intensity: 0.7 relative strength (requested)
-        // Only active when above horizon
-        this.moonLight.intensity = moonHeightRatio * 0.7;
-    }
+        const moonHeightRatio = Math.max(0, Math.min(1, moonY / this.SUN_DISTANCE));
+        this.moonLight.intensity = moonHeightRatio * 0.5; // Brighter moonlight
 
-    private updateSkyColors(): void {
-        const timeOfDay = this.timeSystem.getTimeOfDayFraction();
-
-        let skyColor: BABYLON.Color3;
-        let groundColor: BABYLON.Color3;
-        let ambientColor: BABYLON.Color3;
-
-        if (timeOfDay < 0.25) {
-            // Night to dawn (0:00 - 6:00)
-            const t = timeOfDay / 0.25;
-            skyColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.02, 0.02, 0.08), // Dark night
-                new BABYLON.Color3(0.4, 0.3, 0.5), // Dawn purple
-                t
-            );
-            groundColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.01, 0.01, 0.03),
-                new BABYLON.Color3(0.2, 0.15, 0.1),
-                t
-            );
-            ambientColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.25, 0.25, 0.45), // Bright Night Blue
-                new BABYLON.Color3(0.4, 0.3, 0.4), // Dawn
-                t
-            );
-        } else if (timeOfDay < 0.5) {
-            // Dawn to noon (6:00 - 12:00)
-            const t = (timeOfDay - 0.25) / 0.25;
-            skyColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.4, 0.3, 0.5), // Dawn purple
-                new BABYLON.Color3(0.4, 0.6, 0.9), // Bright day blue
-                t
-            );
-            groundColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.2, 0.15, 0.1),
-                new BABYLON.Color3(0.3, 0.35, 0.4),
-                t
-            );
-            ambientColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.4, 0.3, 0.4), // Dawn
-                new BABYLON.Color3(0.7, 0.7, 0.7), // Noon White
-                t
-            );
-        } else if (timeOfDay < 0.75) {
-            // Noon to dusk (12:00 - 18:00)
-            const t = (timeOfDay - 0.5) / 0.25;
-            skyColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.4, 0.6, 0.9), // Bright day blue
-                new BABYLON.Color3(0.8, 0.4, 0.3), // Sunset orange
-                t
-            );
-            groundColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.3, 0.35, 0.4),
-                new BABYLON.Color3(0.3, 0.15, 0.1),
-                t
-            );
-            ambientColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.7, 0.7, 0.7), // Noon White
-                new BABYLON.Color3(0.6, 0.5, 0.5), // Dusk
-                t
-            );
+        // --- Ambient Logic ---
+        // Adjust ambient based on time
+        if (isDay) {
+            this.ambientLight.intensity = 0.5 + sunHeightRatio * 0.2;
+            this.ambientLight.diffuse = new BABYLON.Color3(0.6, 0.7, 0.8);
         } else {
-            // Dusk to night (18:00 - 24:00)
-            const t = (timeOfDay - 0.75) / 0.25;
-            skyColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.8, 0.4, 0.3), // Sunset orange
-                new BABYLON.Color3(0.02, 0.02, 0.08), // Dark night
-                t
-            );
-            groundColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.3, 0.15, 0.1),
-                new BABYLON.Color3(0.01, 0.01, 0.03),
-                t
-            );
-            ambientColor = BABYLON.Color3.Lerp(
-                new BABYLON.Color3(0.6, 0.5, 0.5), // Dusk
-                new BABYLON.Color3(0.25, 0.25, 0.45), // Bright Night Blue
-                t
-            );
+            this.ambientLight.intensity = 0.5; // Brighter night ambient
+            this.ambientLight.diffuse = new BABYLON.Color3(0.1, 0.1, 0.3); // Night blue
         }
-
-        // Update scene clear color (sky background)
-        this.scene.clearColor = new BABYLON.Color4(skyColor.r, skyColor.g, skyColor.b, 1);
-        this.skyboxMaterial.emissiveColor = skyColor;
-        this.ambientLight.groundColor = groundColor;
-        this.ambientLight.diffuse = ambientColor!;
     }
 
     /**
@@ -283,9 +253,8 @@ export class LightingSystem extends System {
 
         // Check for intersection with any mesh
         const pickInfo = this.scene.pickWithRay(ray, (mesh) => {
-            // Ignore sun mesh, skybox, and ground
-            return mesh.name !== "sunMesh" &&
-                mesh.name !== "skyBox" &&
+            // Ignore skybox and ground
+            return mesh.name !== "skyBox" &&
                 mesh.name !== "ground" &&
                 mesh.isVisible;
         });
@@ -294,7 +263,7 @@ export class LightingSystem extends System {
             return 0; // In shadow
         }
 
-        // Calculate intensity based on sun height (dimmer at dawn/dusk)
+        // Calculate intensity based on sun height
         const angle = (timeOfDay - 0.25) * 2 * Math.PI;
         const sunY = Math.sin(angle) * this.SUN_DISTANCE + this.SUN_HEIGHT_OFFSET;
         const heightRatio = Math.max(0, Math.min(1, sunY / this.SUN_DISTANCE));

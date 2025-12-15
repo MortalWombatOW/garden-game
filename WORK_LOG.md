@@ -1,5 +1,108 @@
 # Work Log
 
+## 2025-12-15: Refine Background Boundaries
+
+### Task
+Add ground planes and horizon features to all background presets to make the world feel infinite and grounded.
+
+### What Was Done
+1.  **Updated `BackgroundSystem.ts`**:
+    -   Added `createGround` method to generate a large static ground quad for each preset.
+    -   **Forest**: Added dark green ground and a "Tree Wall" of giant trees at the horizon.
+    -   **City**: Added concrete island, a surrounding ocean, and optimized building generation.
+    -   **Desert**: Added sand ground and a ring of "Canyon Walls" (reddish cliffs) at the horizon.
+    -   **Town**: Added grass ground and a ring of rolling green hills.
+2.  **Performance**:
+    -   Merged all horizon objects into single meshes.
+    -   Applied `freezeWorldMatrix()` to all static background meshes to minimize CPU overhead.
+
+### Files Modified
+-   `src/systems/BackgroundSystem.ts`: Implemented ground and horizon logic.
+
+### Lessons Learned
+-   Using simple "walls" or "hills" at the horizon is a cheap and effective way to hide the void and create a sense of scale. Merging these meshes is critical for maintaining high frame rates.
+
+## 2025-12-15: Adjustments
+-   **Lighting**: Increased moon light intensity and night ambient light intensity to 0.5 for better night visibility.
+-   **Boundaries**: Scaled up City and Town buildings/houses by 2-3x. Improved Town rolling hills with 5 layers of depth and adjusted height.
+
+## 2025-12-15: Implement Stars at Night
+
+### Task
+Add a star field that appears at night to complement the procedural skybox.
+
+### What Was Done
+1.  **Implemented `PointsCloudSystem`**: Added a particle system in `LightingSystem.ts` to generate 2000 stars on a distant sphere.
+2.  **Dynamic Visibility**: Added logic to fade the stars in as the sun goes below the horizon and fade them out at dawn.
+3.  **Rotation**: Added a slow rotation to the star field to simulate the passage of time.
+4.  **Brightness**: Boosted star brightness by 1.5x for better visibility.
+
+### Files Modified
+-   `src/systems/LightingSystem.ts`: Added star field logic.
+
+### Lessons Learned
+-   `PointsCloudSystem` is perfect for rendering thousands of simple dots efficiently. Casting materials to specific types (like `StandardMaterial`) is sometimes necessary to access properties like `disableLighting` when using TypeScript.
+
+## 2025-12-15: Implement Procedural Skybox
+
+### Task
+Replace the static background color with a dynamic day/night skybox.
+
+### What Was Done
+1.  **Installed `@babylonjs/materials`**: Added dependency for `SkyMaterial`.
+2.  **Updated `LightingSystem.ts`**:
+    -   Replaced `sunMesh` and `moonMesh` spheres with `SkyMaterial`.
+    -   Configured `SkyMaterial` to sync its `sunPosition` with the `TimeSystem`, handling atmospheric scattering automatically.
+    -   Kept `DirectionalLight` logic for shadowing and terrain illumination, but removed manual sky color lerping.
+
+### Files Modified
+-   `src/systems/LightingSystem.ts`: Integrated `SkyMaterial`.
+-   `package.json`: Added dependency.
+
+### Lessons Learned
+-   `SkyMaterial` handles the visual aspect of the sun (the disc in the sky) but not the actual lighting of the scene. You still need `DirectionalLight` for that, but you can sync them easily by position.
+
+## 2025-12-14: Implement Backgrounds System
+
+### Task
+Add procedural background environments to fill the void beyond the garden fence.
+
+### What Was Done
+1.  **Created `BackgroundSystem`**:
+    -   Implemented a system to generate instances of background scenery in a ring around the play area.
+    -   Added 4 Presets: **Forest** (Trees), **City** (Skyscrapers), **Desert** (Cacti), **Town** (Houses).
+    -   Each preset uses procedural placement logic (`getRandomPosition`) and merges meshes for performance.
+2.  **Integrated into `main.ts`**:
+    -   Added `BackgroundSystem` to the world.
+    -   Added `B` key shortcut to cycle through background presets at runtime.
+
+### Files Modified
+-   `src/systems/BackgroundSystem.ts`: New file.
+-   `src/main.ts`: Added system registration and key listener.
+
+### Lessons Learned
+-   Procedurally generating simple shapes (cubes, cylinders) allows for creating distinct visual identities without needing external assets. Merging meshes remains critical for performance when scattering 100+ objects.
+
+## 2025-12-14: Implement Grandma's Yard Fence
+
+### Task
+Implement a world border that feels cozy and thematic, rather than an abstract void.
+
+### What Was Done
+1.  **Created `WorldBorderSystem`**:
+    -   Procedurally generates a picket fence around the 50x50 map perimeter.
+    -   Varies post and picket height based on the terrain using `Engine.getTerrainHeightAt`.
+    -   Merges all fence meshes into a single `WorldBorderFence` mesh for performance.
+2.  **Integrated into `main.ts`**:
+    -   Added `WorldBorderSystem` to the ECS world.
+
+### Files Modified
+-   `src/systems/WorldBorderSystem.ts`: New file.
+-   `src/main.ts`: Added system registration.
+
+### Lessons Learned
+-   Procedural placement of static objects (like fences) needs to respect the terrain height map to look grounded. merging meshes is crucial to keep draw calls low when generating hundreds of pickets.
+
 ## 2025-12-14: Implement Nitrogen Absorption and Inspect UI
 
 ### Task

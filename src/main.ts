@@ -62,6 +62,13 @@ import { DecaySystem } from "./systems/DecaySystem";
 const decaySystem = new DecaySystem(world, timeSystem, soilSystem);
 world.addSystem(decaySystem);
 
+import { WorldBorderSystem } from "./systems/WorldBorderSystem";
+const worldBorderSystem = new WorldBorderSystem(world);
+world.addSystem(worldBorderSystem);
+
+import { BackgroundSystem } from "./systems/BackgroundSystem";
+const backgroundSystem = new BackgroundSystem(world);
+world.addSystem(backgroundSystem);
 
 world.addSystem(inputSystem);
 
@@ -99,6 +106,10 @@ window.addEventListener("keydown", (e) => {
     soilSystem.setWaterOverlay(!currentState);
     renderSystem.setWaterOverlay(!currentState);
     waterGraphSystem.setVisible(!currentState);
+  }
+  if (e.key === "b" || e.key === "B") {
+    // Cycle background preset
+    backgroundSystem.cyclePreset();
   }
 });
 

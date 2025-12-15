@@ -16,6 +16,7 @@
     "@babylonjs/core": "^8.40.1",
     "@babylonjs/gui": "^8.40.1",
     "@babylonjs/inspector": "^8.41.0",
-    "@babylonjs/loaders": "^8.40.1"
+    "@babylonjs/loaders": "^8.40.1",
+    "@babylonjs/materials": "^8.41.2"
   }
 }
