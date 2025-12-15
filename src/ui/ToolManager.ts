@@ -8,33 +8,7 @@ export class ToolManager {
     private listeners: ((tool: ToolType) => void)[] = [];
 
     constructor() {
-        this.setupToolbar();
-        this.setupBuildingMenu();
         this.setupKeyboard();
-    }
-
-    private setupToolbar(): void {
-        const buttons = document.querySelectorAll<HTMLButtonElement>(".tool-btn");
-        buttons.forEach(btn => {
-            btn.addEventListener("click", () => {
-                const tool = btn.dataset.tool as ToolType;
-                this.setTool(tool);
-            });
-        });
-    }
-
-    private setupBuildingMenu(): void {
-        const buttons = document.querySelectorAll<HTMLButtonElement>(".building-btn");
-        buttons.forEach(btn => {
-            btn.addEventListener("click", () => {
-                this.activeBuildingType = btn.dataset.building as BuildingType;
-                this.updateUI();
-                // Ensure we are in build mode
-                if (this.currentTool !== "build") {
-                    this.setTool("build");
-                }
-            });
-        });
     }
 
     private setupKeyboard(): void {
@@ -59,7 +33,6 @@ export class ToolManager {
 
     public setTool(tool: ToolType): void {
         this.currentTool = tool;
-        this.updateUI();
         this.notifyListeners();
     }
 
@@ -71,6 +44,14 @@ export class ToolManager {
         return this.activeBuildingType;
     }
 
+    public setActiveBuilding(type: BuildingType): void {
+        this.activeBuildingType = type;
+        // Ensure we are in build mode
+        if (this.currentTool !== "build") {
+            this.setTool("build");
+        }
+    }
+
     public onToolChange(callback: (tool: ToolType) => void): void {
         this.listeners.push(callback);
     }
@@ -79,36 +60,5 @@ export class ToolManager {
         for (const listener of this.listeners) {
             listener(this.currentTool);
         }
-    }
-
-    private updateUI(): void {
-        const buttons = document.querySelectorAll<HTMLButtonElement>(".tool-btn");
-        buttons.forEach(btn => {
-            const tool = btn.dataset.tool as ToolType;
-            if (tool === this.currentTool) {
-                btn.classList.add("active");
-            } else {
-                btn.classList.remove("active");
-            }
-        });
-
-        // Update Building Menu visibility
-        const buildingMenu = document.getElementById("building-menu");
-        if (this.currentTool === "build") {
-            buildingMenu?.classList.remove("hidden");
-        } else {
-            buildingMenu?.classList.add("hidden");
-        }
-
-        // Update Building Buttons
-        const buildingButtons = document.querySelectorAll<HTMLButtonElement>(".building-btn");
-        buildingButtons.forEach(btn => {
-            const type = btn.dataset.building as BuildingType;
-            if (type === this.activeBuildingType) {
-                btn.classList.add("active");
-            } else {
-                btn.classList.remove("active");
-            }
-        });
     }
 }

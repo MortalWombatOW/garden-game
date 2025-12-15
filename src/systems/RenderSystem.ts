@@ -9,6 +9,7 @@ import { Needs } from "../components/Needs";
 import { TransformComponent } from "../components/TransformComponent";
 import { Engine } from "../core/Engine";
 import * as BABYLON from "@babylonjs/core";
+import * as GUI from "@babylonjs/gui";
 import { TimeSystem } from "./TimeSystem";
 import { LightingSystem } from "./LightingSystem";
 
@@ -17,16 +18,25 @@ import { LightingSystem } from "./LightingSystem";
 
 type PlantStatus = "happy" | "thirsty" | "wilting" | "coma" | "dead" | "growing";
 
+// 3D Label interface
+interface PlantLabel {
+    plane: BABYLON.Mesh;
+    texture: GUI.AdvancedDynamicTexture;
+    textBlock: GUI.TextBlock;
+    background: GUI.Rectangle;
+}
+
 export class RenderSystem extends System {
     private scene: BABYLON.Scene;
-    private engine: BABYLON.Engine;
     private gameEngine: Engine;
 
     // Standard meshes for all entities (plants, buildings, dead plants)
     private entityMeshes: Map<EntityID, BABYLON.Mesh> = new Map();
 
-    private statusLabelsContainer: HTMLElement | null;
-    private statusLabels: Map<EntityID, HTMLElement> = new Map();
+    // 3D Labels for plants (replaces HTML labels)
+    private plantLabels: Map<EntityID, PlantLabel> = new Map();
+    private overlayEnabled: boolean = false;
+
     private lightingSystem: LightingSystem | null = null;
     private waterOverlayEnabled: boolean = false;
 
@@ -38,8 +48,6 @@ export class RenderSystem extends System {
         super(world, SystemType.RENDER);
         this.gameEngine = Engine.getInstance();
         this.scene = this.gameEngine.getScene();
-        this.engine = this.gameEngine.getEngine();
-        this.statusLabelsContainer = document.getElementById("status-labels");
 
         // Initialize Rain
         this.initializeRain();
@@ -104,6 +112,14 @@ export class RenderSystem extends System {
 
     public setWaterOverlay(enabled: boolean): void {
         this.waterOverlayEnabled = enabled;
+    }
+
+    public setOverlayEnabled(enabled: boolean): void {
+        this.overlayEnabled = enabled;
+        // Update visibility of all existing labels
+        for (const label of this.plantLabels.values()) {
+            label.plane.setEnabled(enabled);
+        }
     }
 
     public update(deltaTime: number): void {
@@ -174,7 +190,7 @@ export class RenderSystem extends System {
 
             // Update appearance (stress effects, color, etc.)
             this.updatePlantAppearance(entity.id, mesh!, state, needs, deltaTime);
-            this.updateStatusLabel(entity.id, state, needs, transform);
+            this.updatePlantLabel(entity.id, state, needs, transform);
         }
     }
 
@@ -396,10 +412,12 @@ export class RenderSystem extends System {
                 mesh.dispose();
                 this.entityMeshes.delete(id);
 
-                const label = this.statusLabels.get(id);
+                // Cleanup 3D label
+                const label = this.plantLabels.get(id);
                 if (label) {
-                    label.remove();
-                    this.statusLabels.delete(id);
+                    label.texture.dispose();
+                    label.plane.dispose();
+                    this.plantLabels.delete(id);
                 }
             }
         }
@@ -425,44 +443,77 @@ export class RenderSystem extends System {
         }
     }
 
-    private updateStatusLabel(entityId: EntityID, state: PlantState, needs: Needs | undefined, transform: TransformComponent): void {
-        if (!this.statusLabelsContainer) return;
+    private getStatusColor(status: PlantStatus): string {
+        switch (status) {
+            case "happy": return "#4ade80";
+            case "thirsty": return "#fbbf24";
+            case "wilting": return "#ef4444";
+            case "coma": return "#9ca3af";
+            case "dead": return "#4b5563";
+            case "growing": return "#60a5fa";
+        }
+    }
 
+    private updatePlantLabel(entityId: EntityID, state: PlantState, needs: Needs | undefined, transform: TransformComponent): void {
         const status = this.getPlantStatus(state, needs);
-        let label = this.statusLabels.get(entityId);
+        let label = this.plantLabels.get(entityId);
 
+        // Create 3D label if it doesn't exist
         if (!label) {
-            label = document.createElement("div");
-            label.className = `status-label ${status}`;
-            this.statusLabelsContainer.appendChild(label);
-            this.statusLabels.set(entityId, label);
+            label = this.create3DLabel(entityId, transform);
+            this.plantLabels.set(entityId, label);
         }
 
-        label.textContent = this.getStatusText(status);
-        label.className = `status-label ${status}`;
+        // Update label content
+        label.textBlock.text = this.getStatusText(status);
+        label.background.background = this.getStatusColor(status);
 
-        // Approximate height based on growth or fixed offset
-        // L-System plants can vary, but we can assume ~2 units max height for label
+        // Update label position based on plant growth
         const heightOffset = 1.0 + (state.growthProgress * 0.2);
         const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
-        const worldPos = new BABYLON.Vector3(transform.x, terrainY + heightOffset + 0.3, transform.z);
+        label.plane.position.y = terrainY + heightOffset + 0.5;
 
-        const screenPos = BABYLON.Vector3.Project(
-            worldPos,
-            BABYLON.Matrix.Identity(),
-            this.scene.getTransformMatrix(),
-            this.scene.activeCamera!.viewport.toGlobal(
-                this.engine.getRenderWidth(),
-                this.engine.getRenderHeight()
-            )
-        );
+        // Visibility controlled by overlay toggle
+        label.plane.setEnabled(this.overlayEnabled);
+    }
 
-        if (screenPos.z > 1) {
-            label.style.display = "none";
-        } else {
-            label.style.display = "block";
-            label.style.left = `${screenPos.x}px`;
-            label.style.top = `${screenPos.y}px`;
-        }
+    private create3DLabel(entityId: EntityID, transform: TransformComponent): PlantLabel {
+        // Create a small plane for the label
+        const plane = BABYLON.MeshBuilder.CreatePlane(`label_${entityId}`, {
+            width: 0.8,
+            height: 0.25
+        }, this.scene);
+
+        const terrainY = this.gameEngine.getTerrainHeightAt(transform.x, transform.z);
+        plane.position = new BABYLON.Vector3(transform.x, terrainY + 1.5, transform.z);
+        plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+
+        // Ensure label doesn't cast shadows
+        plane.receiveShadows = false;
+
+        // Create advanced dynamic texture for the plane
+        const texture = GUI.AdvancedDynamicTexture.CreateForMesh(plane, 256, 64);
+
+        // Create background rectangle
+        const background = new GUI.Rectangle();
+        background.width = "100%";
+        background.height = "100%";
+        background.cornerRadius = 10;
+        background.background = "#4ade80";
+        background.alpha = 0.9;
+        texture.addControl(background);
+
+        // Create text block
+        const textBlock = new GUI.TextBlock();
+        textBlock.text = "😊 Happy";
+        textBlock.color = "white";
+        textBlock.fontSize = 24;
+        textBlock.fontWeight = "bold";
+        background.addControl(textBlock);
+
+        // Start hidden (only show when overlay is enabled)
+        plane.setEnabled(this.overlayEnabled);
+
+        return { plane, texture, textBlock, background };
     }
 }

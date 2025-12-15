@@ -165,3 +165,4 @@ npm run dev
   - [] create proceduraltextures for soil and plants
   - [] weather events respect time scale
   - [] fly through the world like a bird
+  - [] fix lightpost/hose

@@ -8,61 +8,6 @@
 </head>
 
 <body>
-  <div id="hud">
-    <div id="seed-display">🌱 5</div>
-    <div id="time-display">☀️ 06:00</div>
-    <div id="time-controls">
-      <button class="speed-btn" data-speed="0" title="Pause">0x</button>
-      <button class="speed-btn active" data-speed="1" title="1x Speed">1x</button>
-      <button class="speed-btn" data-speed="2" title="2x Speed">2x</button>
-      <button class="speed-btn" data-speed="4" title="4x Speed">4x</button>
-      <button class="speed-btn" id="sleep-btn" title="Sleep until 6 AM">🌙</button>
-    </div>
-  </div>
-
-  <div id="overlay-controls">
-    <button class="overlay-btn" id="overlay-satisfaction" title="Toggle Plant Satisfaction (O)">
-      🌿
-    </button>
-    <button class="overlay-btn" id="overlay-water" title="Toggle Water View (P)">
-      💧
-    </button>
-  </div>
-
-  <div id="toolbar">
-    <button class="tool-btn active" data-tool="plant" title="Plant Seed (1)">
-      🌱
-    </button>
-    <button class="tool-btn" data-tool="inspect" title="Inspect (2)">
-      🔍
-    </button>
-    <button class="tool-btn" data-tool="water" title="Watering Can (3)">
-      💧
-    </button>
-    <button class="tool-btn" data-tool="build" title="Build (4)">
-      🔨
-    </button>
-    <button class="tool-btn" data-tool="compost" title="Compost (5)">
-      🧪
-    </button>
-    <button class="tool-btn" data-tool="harvest" title="Harvest (6)">
-      🌾
-    </button>
-  </div>
-
-  <div id="building-menu" class="hidden">
-    <button class="building-btn active" data-building="lightpost" title="Lightpost">
-      💡 Lightpost
-    </button>
-    <button class="building-btn" data-building="hose" title="Hose">
-      🚿 Hose
-    </button>
-  </div>
-
-  <div id="tooltip" class="hidden"></div>
-
-  <div id="status-labels" class="hidden"></div>
-
   <canvas id="renderCanvas"></canvas>
   <script type="module" src="/src/main.ts"></script>
 </body>

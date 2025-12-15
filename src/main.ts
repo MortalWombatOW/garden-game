@@ -10,6 +10,7 @@ import { TimeSystem } from "./systems/TimeSystem";
 import { SoilSystem } from "./systems/SoilSystem";
 import { LightingSystem } from "./systems/LightingSystem";
 import { ToolManager } from "./ui/ToolManager";
+import { DiegeticUISystem } from "./systems/DiegeticUISystem";
 import "./style.css";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
@@ -72,53 +73,26 @@ import { WaterGraphSystem } from "./systems/WaterGraphSystem";
 const waterGraphSystem = new WaterGraphSystem(world);
 world.addSystem(waterGraphSystem);
 
-// HUD Update
-const timeDisplay = document.getElementById("time-display");
-function updateHUD(): void {
-  if (timeDisplay) {
-    timeDisplay.textContent = `${timeSystem.getSunIcon()} ${timeSystem.getFormattedTime()}`;
-  }
-  requestAnimationFrame(updateHUD);
-}
-updateHUD();
+// Initialize Diegetic 3D UI System (after camera is ready)
+const diegeticUISystem = new DiegeticUISystem(world, toolManager);
+world.addSystem(diegeticUISystem);
 
-// Overlay Controls
-const overlayBtn = document.getElementById("overlay-satisfaction");
-const statusLabels = document.getElementById("status-labels");
-let overlayActive = false;
-
-function toggleOverlay(): void {
-  overlayActive = !overlayActive;
-  overlayBtn?.classList.toggle("active", overlayActive);
-  statusLabels?.classList.toggle("hidden", !overlayActive);
-}
-
-overlayBtn?.addEventListener("click", toggleOverlay);
+// Keyboard shortcuts for overlays and inspector
 window.addEventListener("keydown", (e) => {
   if (e.key === "o" || e.key === "O") {
-    toggleOverlay();
+    // Toggle plant satisfaction overlay
+    const currentState = renderSystem["overlayEnabled"];
+    renderSystem.setOverlayEnabled(!currentState);
   }
   if (e.key === "i" || e.key === "I") {
     engine.toggleInspector();
   }
-});
-
-// Water View Controls
-const waterBtn = document.getElementById("overlay-water");
-let waterOverlayActive = false;
-
-function toggleWaterOverlay(): void {
-  waterOverlayActive = !waterOverlayActive;
-  waterBtn?.classList.toggle("active", waterOverlayActive);
-  soilSystem.setWaterOverlay(waterOverlayActive);
-  renderSystem.setWaterOverlay(waterOverlayActive);
-  waterGraphSystem.setVisible(waterOverlayActive);
-}
-
-waterBtn?.addEventListener("click", toggleWaterOverlay);
-window.addEventListener("keydown", (e) => {
   if (e.key === "p" || e.key === "P") {
-    toggleWaterOverlay();
+    // Toggle water overlay
+    const currentState = renderSystem["waterOverlayEnabled"];
+    soilSystem.setWaterOverlay(!currentState);
+    renderSystem.setWaterOverlay(!currentState);
+    waterGraphSystem.setVisible(!currentState);
   }
 });
 
@@ -127,38 +101,4 @@ const loop = new GameLoop(engine, world);
 loop.setTimeSystem(timeSystem);
 loop.start();
 
-// Time Controls
-const speedButtons = document.querySelectorAll<HTMLButtonElement>(".speed-btn:not(#sleep-btn)");
-const sleepBtn = document.getElementById("sleep-btn");
-
-speedButtons.forEach(btn => {
-  btn.addEventListener("click", () => {
-    // Cancel any active sleep when manually changing speed
-    timeSystem.cancelSleep();
-    sleepBtn?.classList.remove("active");
-
-    const speed = parseFloat(btn.dataset.speed || "1");
-    loop.timeScale = speed;
-    speedButtons.forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-  });
-});
-
-// Sleep Button
-sleepBtn?.addEventListener("click", () => {
-  if (timeSystem.getIsSleeping()) {
-    // Cancel sleep if already sleeping
-    timeSystem.cancelSleep();
-    return;
-  }
-
-  // Visual feedback - mark sleep button as active
-  sleepBtn.classList.add("active");
-
-  timeSystem.startSleep(() => {
-    // Sleep complete - restore normal visuals
-    sleepBtn.classList.remove("active");
-  });
-});
-
-console.log("Verdant started. Use toolbar or switch tools (1=Plant, 2=Inspect, 3=Water), O for overlay, Escape to deselect.");
+console.log("Verdant started. Use 3D toolbar or keyboard shortcuts (1=Plant, 2=Inspect, 3=Water, 4=Build, 5=Compost, 6=Harvest), O for overlay, P for water view, Escape to deselect.");
