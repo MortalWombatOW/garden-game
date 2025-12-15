@@ -189,3 +189,20 @@ Fix the Inspect tool which was failing to detect plants and display information.
 ### Lessons Learned
 - When using `BILLBOARDMODE_ALL` on a plane, orientation matters. `DOUBLESIDE` is safer to ensure visibility.
 - For 3D UI elements that must not clip into the world, using `renderingGroupId` is a robust solution to force draw order.
+
+## 2025-12-15: Adjust Rain Visuals
+
+### Task
+Make the rain start much higher and cover a larger area, but make it less dense.
+
+### What Was Done
+1.  **Modified `RainSystem` in `RenderSystem.ts`**:
+    -   Increased `emitter` Y position from 20 to 50.
+    -   Expanded `minEmitBox` and `maxEmitBox` range from (-40, 40) to (-60, 60).
+    -   Reduced `emitRate` multiplier from 1500 to 500 for less density.
+
+### Files Modified
+-   `src/systems/RenderSystem.ts`: Adjusted rain parameters.
+
+### Lessons Learned
+-   Simple parameter tweaks to particle systems can significantly change the atmosphere without new assets or complex logic.

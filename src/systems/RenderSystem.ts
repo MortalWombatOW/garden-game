@@ -74,9 +74,9 @@ export class RenderSystem extends System {
         this.rainSystem.particleTexture = rainTexture;
 
         // Emitter shape - large box above the ground
-        this.rainSystem.emitter = new BABYLON.Vector3(0, 20, 0);
-        this.rainSystem.minEmitBox = new BABYLON.Vector3(-40, 0, -20);
-        this.rainSystem.maxEmitBox = new BABYLON.Vector3(40, 0, 40);
+        this.rainSystem.emitter = new BABYLON.Vector3(0, 50, 0);
+        this.rainSystem.minEmitBox = new BABYLON.Vector3(-60, 0, -60);
+        this.rainSystem.maxEmitBox = new BABYLON.Vector3(60, 0, 60);
 
         // Life time and size
         this.rainSystem.minLifeTime = 0.5;
@@ -132,7 +132,7 @@ export class RenderSystem extends System {
         // 2. Update Rain
         if (this.rainSystem && this.timeSystem) {
             const intensity = this.timeSystem.rainIntensity;
-            this.rainSystem.emitRate = intensity * 1500;
+            this.rainSystem.emitRate = intensity * 500;
         }
 
         // Track active entity IDs for cleanup
