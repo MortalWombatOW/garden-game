@@ -1,4 +1,3 @@
-
 import { Entity, System, SystemType, World } from "../core/ECS";
 import { Engine } from "../core/Engine";
 import { SpatialHashGrid } from "../core/SpatialHashGrid";
@@ -10,6 +9,7 @@ import { Needs } from "../components/Needs";
 import { PlayerState } from "../components/PlayerState";
 import { ToolManager } from "../ui/ToolManager";
 import { SoilSystem } from "./SoilSystem";
+import { DiegeticUISystem } from "./DiegeticUISystem";
 import { ROOT_RADIUS } from "./GrowthSystem";
 import * as BABYLON from "@babylonjs/core";
 
@@ -32,6 +32,7 @@ export class InputSystem extends System {
     private tooltipEl: HTMLElement | null;
     private soilSystem: SoilSystem;
     private playerEntity: Entity | null = null;
+    private diegeticUI: DiegeticUISystem | null = null;
 
     constructor(world: World, spatialHash: SpatialHashGrid, toolManager: ToolManager, soilSystem: SoilSystem, playerEntity: Entity) {
         super(world, SystemType.RENDER);
@@ -86,6 +87,10 @@ export class InputSystem extends System {
         this.handleToolChange(this.toolManager.getTool());
     }
 
+    public setDiegeticUI(diegeticUI: DiegeticUISystem): void {
+        this.diegeticUI = diegeticUI;
+    }
+
     private setupInput(): void {
         this.scene.onPointerDown = (evt, pickResult) => {
             const tool = this.toolManager.getTool();
@@ -125,8 +130,9 @@ export class InputSystem extends System {
         const mouseInput = camera.inputs.attached["mouse"] as BABYLON.FreeCameraMouseInput;
         const canvas = this.scene.getEngine().getRenderingCanvas();
 
-        if (tool === "water" || tool === "compost") {
-            // Switch camera rotation to Right Mouse Button (2) to free up Left Mouse Button (0) for tool use
+        // Tools that need left-click free for interaction (water, compost, inspect, harvest)
+        // Switch camera rotation to Right Mouse Button (2) to free up Left Mouse Button (0)
+        if (tool === "water" || tool === "compost" || tool === "inspect" || tool === "harvest") {
             mouseInput.buttons = [2];
 
             // Prevent context menu when using right click for camera
@@ -241,8 +247,13 @@ export class InputSystem extends System {
             this.cursorMesh.isVisible = false;
         }
 
-        // Raycast
+        // Raycast - exclude 3D UI meshes (toolbar buttons, status panel, labels)
         const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (mesh) => {
+            // Exclude 3D UI elements from picking
+            if (mesh.name.startsWith("mesh_") || mesh.name.startsWith("btn3d_") ||
+                mesh.name === "status_plane" || mesh.name.startsWith("label_")) {
+                return false;
+            }
             return mesh.name === "ground" || mesh.name.startsWith("plant_") || mesh.name.startsWith("building_");
         });
 
@@ -545,22 +556,30 @@ export class InputSystem extends System {
                         ? `${(state.age * 60).toFixed(0)} min`
                         : `${state.age.toFixed(1)} hrs`;
 
-                    // Build competition info if applicable
-                    const competitionDisplay = state.waterCompetitionPenalty > 0.01
-                        ? `<div class="tooltip-row"><span class="tooltip-label">⚔️ Competition:</span><span class="tooltip-value" style="color: #ff8866">${(state.waterCompetitionPenalty * 100).toFixed(0)}% penalty</span></div>`
-                        : '';
+                    // Build tooltip rows
+                    const rows: Array<{ label: string; value: string; color?: string }> = [
+                        { label: "Stage:", value: state.stage },
+                        { label: "Age:", value: ageDisplay },
+                        { label: "Health:", value: state.health > 0 ? "Alive" : "Dead", color: state.health > 0 ? "#88ff88" : "#ff8888" },
+                        { label: "Water:", value: `${needs.water.toFixed(0)}%` },
+                        { label: "🌱 Root Zone:", value: `${rootRadius.toFixed(1)}m` },
+                    ];
 
-                    this.showTooltip(
-                        `<div class="tooltip-title">🌿 Plant #${entity.id}</div>
-                        <div class="tooltip-row"><span class="tooltip-label">Stage:</span><span class="tooltip-value">${state.stage}</span></div>
-                        <div class="tooltip-row"><span class="tooltip-label">Age:</span><span class="tooltip-value">${ageDisplay}</span></div>
-                        <div class="tooltip-row"><span class="tooltip-label">Health:</span><span class="tooltip-value">${state.health > 0 ? "Alive" : "Dead"}</span></div>
-                        <div class="tooltip-row"><span class="tooltip-label">Water:</span><span class="tooltip-value">${needs.water.toFixed(0)}%</span></div>
-                        <div class="tooltip-row"><span class="tooltip-label">🌱 Root Zone:</span><span class="tooltip-value">${rootRadius.toFixed(1)}m</span></div>
-                        ${competitionDisplay}`,
-                        this.scene.pointerX,
-                        this.scene.pointerY
-                    );
+                    // Add competition info if applicable
+                    if (state.waterCompetitionPenalty > 0.01) {
+                        rows.push({
+                            label: "⚔️ Competition:",
+                            value: `${(state.waterCompetitionPenalty * 100).toFixed(0)}% penalty`,
+                            color: "#ff8866"
+                        });
+                    }
+
+                    // Show 3D tooltip
+                    if (this.diegeticUI) {
+                        const worldPos = new BABYLON.Vector3(transform.x, 0, transform.z);
+                        this.diegeticUI.showInspectTooltip(worldPos, `🌿 Plant #${entity.id}`, rows);
+                    }
+                    this.hideTooltip(); // Hide HTML tooltip
                     return;
                 }
             }
@@ -572,19 +591,28 @@ export class InputSystem extends System {
             const pos = pickResult.pickedPoint;
             if (pos && this.soilSystem) {
                 const moisture = this.soilSystem.getMoistureAt(pos.x, pos.z);
-                this.showTooltip(
-                    `<div class="tooltip-title">🟫 Soil</div>
-                    <div class="tooltip-row"><span class="tooltip-label">Position:</span><span class="tooltip-value">(${pos.x.toFixed(1)}, ${pos.z.toFixed(1)})</span></div>
-                    <div class="tooltip-row"><span class="tooltip-label">Moisture:</span><span class="tooltip-value">${moisture.toFixed(0)}%</span></div>`,
-                    this.scene.pointerX,
-                    this.scene.pointerY
-                );
+                const nitrogen = this.soilSystem.getNitrogenAt(pos.x, pos.z);
+
+                const rows: Array<{ label: string; value: string; color?: string }> = [
+                    { label: "Position:", value: `(${pos.x.toFixed(1)}, ${pos.z.toFixed(1)})` },
+                    { label: "Moisture:", value: `${moisture.toFixed(0)}%`, color: moisture > 60 ? "#66aaff" : moisture < 30 ? "#ffaa66" : undefined },
+                    { label: "Nitrogen:", value: `${nitrogen.toFixed(0)}%`, color: nitrogen > 50 ? "#88ff88" : nitrogen < 20 ? "#ffaa66" : undefined },
+                ];
+
+                // Show 3D tooltip at ground position
+                if (this.diegeticUI) {
+                    this.diegeticUI.showInspectTooltip(pos.clone(), "🟫 Soil", rows);
+                }
+                this.hideTooltip(); // Hide HTML tooltip
                 return;
             }
         }
 
-        // Hide root zone when not inspecting anything useful
+        // Hide tooltips when not inspecting anything useful
         this.rootZoneMesh.isVisible = false;
+        if (this.diegeticUI) {
+            this.diegeticUI.hideInspectTooltip();
+        }
         this.hideTooltip();
     }
 

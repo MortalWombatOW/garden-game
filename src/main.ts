@@ -74,8 +74,14 @@ const waterGraphSystem = new WaterGraphSystem(world);
 world.addSystem(waterGraphSystem);
 
 // Initialize Diegetic 3D UI System (after camera is ready)
-const diegeticUISystem = new DiegeticUISystem(world, toolManager);
+const diegeticUISystem = new DiegeticUISystem(world, toolManager, playerEntity.id);
 world.addSystem(diegeticUISystem);
+
+// Wire DiegeticUI to InputSystem for 3D tooltips
+inputSystem.setDiegeticUI(diegeticUISystem);
+
+// Wire overlay systems to DiegeticUI for 3D overlay toggles
+diegeticUISystem.setOverlaySystems(renderSystem, soilSystem, waterGraphSystem);
 
 // Keyboard shortcuts for overlays and inspector
 window.addEventListener("keydown", (e) => {
